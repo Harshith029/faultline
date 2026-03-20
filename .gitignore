@@ -1,0 +1,31 @@
+# Environment variables — never commit
+.env.local
+.env
+**/.env.local
+**/.env
+
+# Node modules
+node_modules/
+**/node_modules/
+
+# Build output
+frontend/dashboard/dist/
+
+# Lambda zip
+backend/lambda/timelineHandler/function.zip
+
+# Logs and temp files
+*.log
+response.json
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Vite cache
+frontend/dashboard/.vite/

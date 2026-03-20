@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["bedrock:InvokeModel", "dynamodb:Query"],
+    "Resource": [
+      "arn:aws:dynamodb:ap-south-1:*:table/Faultline-DriftSignals",
+      "arn:aws:bedrock:ap-south-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+    ]
+  }]
+}

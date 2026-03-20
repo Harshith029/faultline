@@ -1,0 +1,233 @@
+[
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:01:00Z",
+    "window_number": 1,
+    "metrics": { "p99_latency_z": 1.1, "retry_rate_z": 0.8, "error_rate_z": 0.6 },
+    "qualified_signals": [],
+    "signal_count": 0,
+    "R_score": 0.00,
+    "confidence": 0.00,
+    "triggered": false,
+    "outage": false
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:02:00Z",
+    "window_number": 2,
+    "metrics": { "p99_latency_z": 1.3, "retry_rate_z": 0.9, "error_rate_z": 0.7 },
+    "qualified_signals": [],
+    "signal_count": 0,
+    "R_score": 0.00,
+    "confidence": 0.00,
+    "triggered": false,
+    "outage": false
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:03:00Z",
+    "window_number": 3,
+    "metrics": { "p99_latency_z": 1.6, "retry_rate_z": 1.1, "error_rate_z": 0.9 },
+    "qualified_signals": [],
+    "signal_count": 0,
+    "R_score": 0.00,
+    "confidence": 0.00,
+    "triggered": false,
+    "outage": false
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:04:00Z",
+    "window_number": 4,
+    "metrics": { "p99_latency_z": 2.1, "retry_rate_z": 1.4, "error_rate_z": 1.1 },
+    "qualified_signals": [],
+    "signal_count": 0,
+    "R_score": 0.72,
+    "confidence": 0.10,
+    "triggered": false,
+    "outage": false
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:05:00Z",
+    "window_number": 5,
+    "metrics": { "p99_latency_z": 2.6, "retry_rate_z": 1.8, "error_rate_z": 1.3 },
+    "qualified_signals": [
+      { "metric": "p99_latency_z", "z_score": 2.6, "windows_sustained": 2 }
+    ],
+    "signal_count": 1,
+    "R_score": 1.04,
+    "confidence": 0.18,
+    "triggered": false,
+    "outage": false
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:06:00Z",
+    "window_number": 6,
+    "metrics": { "p99_latency_z": 2.9, "retry_rate_z": 2.4, "error_rate_z": 1.5 },
+    "qualified_signals": [
+      { "metric": "p99_latency_z", "z_score": 2.9, "windows_sustained": 3 }
+    ],
+    "signal_count": 1,
+    "R_score": 1.89,
+    "confidence": 0.31,
+    "triggered": false,
+    "outage": false
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:07:00Z",
+    "window_number": 7,
+    "metrics": { "p99_latency_z": 2.8, "retry_rate_z": 3.5, "error_rate_z": 2.8 },
+    "qualified_signals": [
+      { "metric": "p99_latency_z", "z_score": 2.8, "windows_sustained": 4 },
+      { "metric": "retry_rate_z", "z_score": 3.5, "windows_sustained": 2 }
+    ],
+    "signal_count": 2,
+    "R_score": 2.77,
+    "confidence": 0.44,
+    "triggered": false,
+    "outage": false
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:08:00Z",
+    "window_number": 8,
+    "metrics": { "p99_latency_z": 3.6, "retry_rate_z": 3.5, "error_rate_z": 2.8 },
+    "qualified_signals": [
+      { "metric": "p99_latency_z", "z_score": 3.6, "windows_sustained": 5 },
+      { "metric": "retry_rate_z", "z_score": 3.5, "windows_sustained": 3 },
+      { "metric": "error_rate_z", "z_score": 2.8, "windows_sustained": 2 }
+    ],
+    "signal_count": 3,
+    "R_score": 3.12,
+    "confidence": 0.58,
+    "triggered": true,
+    "outage": false,
+    "hypothesis": {
+      "root_service": "service-b",
+      "mechanism": "Connection pool exhaustion under sustained retry storm caused cascading thread starvation across dependent services",
+      "cascade_path": "service-b → service-d → service-f",
+      "evidence": [
+        "p99 latency sustained above 2σ for 5 consecutive windows indicating persistent resource contention",
+        "retry rate crossed threshold at W7 and accelerated — consistent with client-side backoff amplification",
+        "error rate joined at W8 confirming downstream propagation beyond retry buffer capacity"
+      ]
+    },
+    "hypothesis_fallback": {
+      "root_service": "service-b",
+      "mechanism": "Connection pool exhaustion under sustained retry storm caused cascading thread starvation across dependent services",
+      "cascade_path": "service-b → service-d → service-f",
+      "evidence": [
+        "p99 latency sustained above 2σ for 5 consecutive windows indicating persistent resource contention",
+        "retry rate crossed threshold at W7 and accelerated — consistent with client-side backoff amplification",
+        "error rate joined at W8 confirming downstream propagation beyond retry buffer capacity"
+      ]
+    }
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:09:00Z",
+    "window_number": 9,
+    "metrics": { "p99_latency_z": 4.1, "retry_rate_z": 4.0, "error_rate_z": 3.4 },
+    "qualified_signals": [
+      { "metric": "p99_latency_z", "z_score": 4.1, "windows_sustained": 6 },
+      { "metric": "retry_rate_z", "z_score": 4.0, "windows_sustained": 4 },
+      { "metric": "error_rate_z", "z_score": 3.4, "windows_sustained": 3 }
+    ],
+    "signal_count": 3,
+    "R_score": 3.74,
+    "confidence": 0.68,
+    "triggered": true,
+    "outage": false,
+    "hypothesis": {
+      "root_service": "service-b",
+      "mechanism": "Connection pool exhaustion under sustained retry storm caused cascading thread starvation across dependent services",
+      "cascade_path": "service-b → service-d → service-f",
+      "evidence": [
+        "p99 latency sustained above 2σ for 5 consecutive windows indicating persistent resource contention",
+        "retry rate crossed threshold at W7 and accelerated — consistent with client-side backoff amplification",
+        "error rate joined at W8 confirming downstream propagation beyond retry buffer capacity"
+      ]
+    }
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:10:00Z",
+    "window_number": 10,
+    "metrics": { "p99_latency_z": 5.2, "retry_rate_z": 4.8, "error_rate_z": 4.1 },
+    "qualified_signals": [
+      { "metric": "p99_latency_z", "z_score": 5.2, "windows_sustained": 7 },
+      { "metric": "retry_rate_z", "z_score": 4.8, "windows_sustained": 5 },
+      { "metric": "error_rate_z", "z_score": 4.1, "windows_sustained": 4 }
+    ],
+    "signal_count": 3,
+    "R_score": 4.51,
+    "confidence": 0.76,
+    "triggered": true,
+    "outage": false,
+    "hypothesis": {
+      "root_service": "service-b",
+      "mechanism": "Connection pool exhaustion under sustained retry storm caused cascading thread starvation across dependent services",
+      "cascade_path": "service-b → service-d → service-f",
+      "evidence": [
+        "p99 latency sustained above 2σ for 5 consecutive windows indicating persistent resource contention",
+        "retry rate crossed threshold at W7 and accelerated — consistent with client-side backoff amplification",
+        "error rate joined at W8 confirming downstream propagation beyond retry buffer capacity"
+      ]
+    }
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:11:00Z",
+    "window_number": 11,
+    "metrics": { "p99_latency_z": 6.8, "retry_rate_z": 5.9, "error_rate_z": 5.3 },
+    "qualified_signals": [
+      { "metric": "p99_latency_z", "z_score": 6.8, "windows_sustained": 8 },
+      { "metric": "retry_rate_z", "z_score": 5.9, "windows_sustained": 6 },
+      { "metric": "error_rate_z", "z_score": 5.3, "windows_sustained": 5 }
+    ],
+    "signal_count": 3,
+    "R_score": 5.89,
+    "confidence": 0.84,
+    "triggered": true,
+    "outage": false,
+    "hypothesis": {
+      "root_service": "service-b",
+      "mechanism": "Connection pool exhaustion under sustained retry storm caused cascading thread starvation across dependent services",
+      "cascade_path": "service-b → service-d → service-f",
+      "evidence": [
+        "p99 latency sustained above 2σ for 5 consecutive windows indicating persistent resource contention",
+        "retry rate crossed threshold at W7 and accelerated — consistent with client-side backoff amplification",
+        "error rate joined at W8 confirming downstream propagation beyond retry buffer capacity"
+      ]
+    }
+  },
+  {
+    "service_id": "B",
+    "window_timestamp": "2026-01-01T10:12:00Z",
+    "window_number": 12,
+    "metrics": { "p99_latency_z": 9.4, "retry_rate_z": 8.1, "error_rate_z": 7.6 },
+    "qualified_signals": [
+      { "metric": "p99_latency_z", "z_score": 9.4, "windows_sustained": 9 },
+      { "metric": "retry_rate_z", "z_score": 8.1, "windows_sustained": 7 },
+      { "metric": "error_rate_z", "z_score": 7.6, "windows_sustained": 6 }
+    ],
+    "signal_count": 3,
+    "R_score": 8.92,
+    "confidence": 0.97,
+    "triggered": true,
+    "outage": true,
+    "hypothesis": {
+      "root_service": "service-b",
+      "mechanism": "Connection pool exhaustion under sustained retry storm caused cascading thread starvation across dependent services",
+      "cascade_path": "service-b → service-d → service-f",
+      "evidence": [
+        "p99 latency sustained above 2σ for 5 consecutive windows indicating persistent resource contention",
+        "retry rate crossed threshold at W7 and accelerated — consistent with client-side backoff amplification",
+        "error rate joined at W8 confirming downstream propagation beyond retry buffer capacity"
+      ]
+    }
+  }
+]
