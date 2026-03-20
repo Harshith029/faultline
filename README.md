@@ -1,4 +1,4 @@
-# ⚡ FAULTLINE
+# FAULTLINE
 ### AI Reliability Intelligence for Distributed Systems
 
 > **FAULTLINE is an AI reliability engineer that watches your distributed systems continuously — detecting failure patterns as they form, reasoning about root causes, predicting cascade trajectories, and telling your team exactly what to do before users are affected.**
@@ -7,7 +7,7 @@
 
 ---
 
-> ⚠️ **This repository is a showcase of FAULTLINE v1.**
+> **This repository is a showcase of FAULTLINE v1.**
 > The source code is published for visibility and collaboration interest only.
 > Commercial use, copying, modification, and redistribution are not permitted.
 > See [Licence](#licence) for details.
@@ -172,7 +172,7 @@ Open the live dashboard and drag the scrubber across 12 windows to watch a casca
 | W5 | Signal 1 qualified. AI identifies connection pool pressure. |
 | W6 | AI names the retry amplification loop as it forms. Recommends pre-emptive action. |
 | W7 | Two signals converging. AI warns: trigger imminent within 1 window. |
-| W8 | ⚡ Detection fires. Bedrock diagnosis appears. Architecture map shows cascade B→D→F. |
+| W8 | Detection fires. Bedrock diagnosis appears. Architecture map shows cascade B→D→F. |
 | W9–W11 | Cascade deepening. AI tracks trajectory. Recovery guidance active. |
 | W12 | ⚠ Outage confirmed. Detected 4 windows ago. |
 
@@ -184,12 +184,12 @@ Open the live dashboard and drag the scrubber across 12 windows to watch a casca
 
 This is FAULTLINE v1 — a working prototype that demonstrates:
 
-- ✅ Deterministic cascade detection on simulated telemetry
-- ✅ Amazon Bedrock AI reasoning at detection moment
-- ✅ Continuous AI intelligence narration across all 12 windows
-- ✅ Interactive cascade visualization
-- ✅ Full AWS serverless deployment
-- ✅ Engineer incident intelligence interface
+-  Deterministic cascade detection on simulated telemetry
+-  Amazon Bedrock AI reasoning at detection moment
+-  Continuous AI intelligence narration across all 12 windows
+-  Interactive cascade visualization
+-  Full AWS serverless deployment
+-  Engineer incident intelligence interface
 
 Built as part of the **AWS Builder Center AIdeas Challenge — Top 1000 Semi-Finalist** by Team Progsolve.
 
@@ -265,27 +265,27 @@ and published as a showcase of what AI-native reliability tooling can look like.
 
 If this project resonates with you, here is how you can support it:
 
-### ⭐ Star this repository
+### Star this repository
 Helps others discover the project and signals that this problem space matters.
 
 ### 📖 Read the full project article on AWS
 The complete story of how FAULTLINE was designed, built, and deployed — 
 including the architecture decisions, the AI reasoning layer, and the roadmap.
 
-👉 [Read the FAULTLINE article on AWS Builder Center](https://builder.aws.com/content/3AuBMFpv22Kue07Q8ZxD0n1GJGD/aideas-faultline-ai-assisted-predictive-reliability-intelligence-for-distributed-systems)
+[Read the FAULTLINE article on AWS Builder Center](https://builder.aws.com/content/3AuBMFpv22Kue07Q8ZxD0n1GJGD/aideas-faultline-ai-assisted-predictive-reliability-intelligence-for-distributed-systems)
 
-### 👍 Like and comment on the article
+### Like and comment on the article
 If you found the approach interesting — the hybrid detection architecture, 
 the AI intelligence layer, the sacred boundary between math and AI — 
 leaving a like or comment on the AWS article helps the project reach more 
 engineers and researchers who are working on similar problems.
 
-### 💬 Leave your thoughts
+### Leave your thoughts
 Have feedback on the architecture? Ideas for v2? 
 Seen a similar problem in your own infrastructure?
 
 Open a GitHub Discussion or reach out directly:
-📧 [harshith.pali3286@gmail.com](mailto:harshith.pali3286@gmail.com)
+[harshith.pali3286@gmail.com](mailto:harshith.pali3286@gmail.com)
 
 Every piece of feedback — technical critique, use case suggestions, 
 research connections — directly shapes where FAULTLINE goes next.
