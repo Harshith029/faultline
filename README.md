@@ -87,6 +87,43 @@ R >= 3.0  →  cascade failure pattern detected
 ```
 When triggered, Amazon Bedrock generates a structured root cause hypothesis from the actual signal data.
 
+### Live, Auditable Detection Engine
+
+The math above is not just described — it runs live, in the browser. [`detectionEngine.js`](frontend/dashboard/src/lib/detectionEngine.js) ingests **raw, un-normalized telemetry** ([`rawTelemetry.js`](frontend/dashboard/src/data/rawTelemetry.js)) and derives every z-score, qualified signal, and R-score on the fly. Scrub the timeline and the whole pipeline recomputes; the dashboard's **Detection Engine** panel shows each value being derived from its raw input — so "auditable math" is reproducible, not asserted.
+
+A verification harness re-derives the scenario from the raw inputs and asserts the result:
+```
+cd frontend/dashboard && npm run verify:engine
+```
+It confirms the engine reproduces the cascade (trigger at **W8**, outage at **W12**) and fires earlier than incumbent alerting.
+
+### Lead Time vs. Threshold Alerting
+
+The same engine models how teams alert today, to quantify the edge:
+
+| Detector | Fires at | Why |
+|----------|:--------:|-----|
+| **FAULTLINE convergence** | **W8** | sustained multi-signal drift |
+| Single-metric 3σ | W8 | noisy — trips on any single spike |
+| Static SLO (error rate ≥ 2%) | W11 | the incumbent: alarms only once you are *already* failing |
+
+FAULTLINE flags the cascade **3 windows (~3 min) before a static SLO alert would fire** — because the *convergence* of sustained signals, not any single threshold crossing, is the signal.
+
+### Counterfactual: What If You Acted?
+
+Lead time only matters if acting on it changes the outcome. The dashboard's **Counterfactual** panel lets you rewind the incident, apply a mitigation (circuit breaker, pool scale-out, load shedding) at any window, and re-run the *same deterministic engine* on the recovered telemetry:
+
+| Act at | Outcome |
+|:------:|---------|
+| W6 / W7 (before trigger) | **Cascade averted** — detection never fires, peak R stays ~2.0 |
+| W8 (at trigger) | Too late to prevent — but outage avoided (peak R 3.96 vs 12.06) |
+
+This makes the value of early detection tangible: the window between W8 and the W12 outage is the time FAULTLINE buys you to act.
+
+### Bring Your Own Telemetry
+
+Because the engine is real, you can point it at *any* data. The **Bring your own telemetry** panel accepts a pasted or uploaded CSV (`p99_latency, retry_rate, error_rate` columns) and runs the same z-score → qualification → R-score pipeline on it live, in the browser — drift chart, risk timeline, trigger window, and lead-time vs. a static SLO included. The bundled example is an *error-led* cascade (a different failure signature from the latency-led built-in incident), demonstrating the detector is not hardcoded to one scenario.
+
 ---
 
 ## What AI Does in FAULTLINE

@@ -85,7 +85,7 @@ export default function RiskTimelineChart({ windows, activeWindow }) {
             />
 
             <YAxis
-              domain={[0, 10]}
+              domain={[0, 13]}
               stroke="rgba(148,163,184,0.16)"
               tick={{ fill: '#94a3b8', fontSize: 11 }}
               axisLine={false}
