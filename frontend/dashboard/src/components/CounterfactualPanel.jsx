@@ -4,11 +4,6 @@ import {
 } from 'recharts'
 import { runCounterfactual, MITIGATIONS } from '../lib/detectionEngine'
 
-// Interactive "what-if": pick a mitigation and the window to act, and the same
-// deterministic engine re-runs on the recovered telemetry. Shows the cascade
-// flattening — making the lead-time value tangible: act before W8 and the
-// outage never happens; act at W8 and you are already mitigating, not preventing.
-
 const ACT_WINDOWS = [5, 6, 7, 8, 9]
 
 const STATUS_STYLE = {

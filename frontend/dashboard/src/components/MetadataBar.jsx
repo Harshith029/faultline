@@ -104,6 +104,12 @@ export default function MetadataBar({
                   <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-slate-400">
                     Live telemetry
                   </span>
+                  <a
+                    href="#"
+                    className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-slate-400 transition hover:text-white"
+                  >
+                    ← Overview
+                  </a>
                 </div>
                 <div className="mt-1 text-sm text-slate-400">
                   AI Reliability Intelligence

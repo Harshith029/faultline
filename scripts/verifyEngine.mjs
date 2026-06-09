@@ -1,10 +1,3 @@
-// Verifies the FAULTLINE detection engine on the raw telemetry.
-// Run: node scripts/verifyEngine.mjs
-//
-// Asserts the engine — computing everything live from raw values — reproduces
-// the cascade narrative (trigger at W8, outage at W12) and fires earlier than
-// the incumbent baseline detectors.
-
 import { runDetection, compareDetectors, runCounterfactual } from '../frontend/dashboard/src/lib/detectionEngine.js'
 import { RAW_TELEMETRY } from '../frontend/dashboard/src/data/rawTelemetry.js'
 
@@ -35,7 +28,6 @@ if (cmp.singleMetric)
 if (cmp.staticSLO)
   console.log(`  Static SLO alert fired at       W${cmp.staticSLO.window}  (lead: ${cmp.staticSLO.leadWindows} windows)`)
 
-// --- assertions -------------------------------------------------------------
 const fails = []
 const detW = result.detectionWindow?.window_number
 const outW = result.outageWindow?.window_number
@@ -44,7 +36,6 @@ if (outW !== 12) fails.push(`expected outage at W12, got W${outW ?? 'none'}`)
 if (result.windows[6].triggered) fails.push('W7 should NOT be triggered (R must stay < 3.0)')
 if (!(cmp.staticSLO?.leadWindows > 0)) fails.push('FAULTLINE should fire before the static SLO alert')
 
-// --- counterfactual ---------------------------------------------------------
 console.log('\nCounterfactual (engage circuit breaker on service-b):')
 for (const window of [6, 7, 8]) {
   const cf = runCounterfactual(RAW_TELEMETRY, { window })

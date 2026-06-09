@@ -1,11 +1,5 @@
 import { METRIC_META } from '../lib/detectionEngine'
 
-// Surfaces the *real* detection math: for the active window it shows each
-// metric's z-score being derived from the raw value and the live baseline,
-// the R-score formula evaluated with actual numbers, and how much earlier
-// FAULTLINE fires than the incumbent threshold detectors. Everything here is
-// recomputed by lib/detectionEngine.js — none of it is precomputed.
-
 const METRIC_ORDER = ['p99_latency', 'retry_rate', 'error_rate']
 
 const fmt = (x, n = 2) => Number(x).toFixed(n)

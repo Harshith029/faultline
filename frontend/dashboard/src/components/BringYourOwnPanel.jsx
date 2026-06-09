@@ -4,11 +4,6 @@ import { parseTelemetryCsv, EXAMPLE_CSV } from '../lib/parseTelemetry'
 import DriftChart from './DriftChart'
 import RiskTimelineChart from './RiskTimelineChart'
 
-// Lets anyone run the real detection engine on their own telemetry. This is the
-// strongest possible proof that the math is genuine and not a scripted demo:
-// paste a CSV, and the same z-score / qualification / R-score pipeline runs on
-// it live, in the browser.
-
 export default function BringYourOwnPanel() {
   const [text, setText] = useState('')
   const [result, setResult] = useState(null)

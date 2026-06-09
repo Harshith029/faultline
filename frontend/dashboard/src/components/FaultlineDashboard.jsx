@@ -19,9 +19,6 @@ import SignalConvergenceHeatmap from './SignalConvergenceHeatmap'
 import ConfidenceTrendChart from './ConfidenceTrendChart'
 import IncidentChatAgent from './IncidentChatAgent'
 
-// Fallback root-cause hypothesis used when the live Bedrock endpoint is not
-// reachable (e.g. local dev with no VITE_API_URL). Mirrors the cascade the
-// deterministic engine detects, so the dashboard is fully functional offline.
 const LOCAL_HYPOTHESIS = {
   root_service: 'service-b',
   mechanism:
@@ -38,14 +35,10 @@ export default function FaultlineDashboard() {
   const [activeWindow, setActiveWindow] = useState(1)
   const [apiHypothesis, setApiHypothesis] = useState(null)
 
-  // The detection runs live, in-browser, on the raw telemetry — this is the
-  // real engine, not precomputed data. The whole dashboard reads from it.
   const engine = useMemo(() => runDetection(RAW_TELEMETRY), [])
   const comparison = useMemo(() => compareDetectors(engine), [engine])
   const windows = engine.windows
 
-  // Optionally enrich with the live Bedrock hypothesis when the API is
-  // reachable; failures are silent because we always have a local fallback.
   useEffect(() => {
     fetchTimeline('B')
       .then((data) => {

@@ -1,8 +1,3 @@
-// Parser for user-supplied telemetry, so anyone can run the real detection
-// engine on their own data — the strongest proof that the math is real and not
-// a scripted demo. Accepts CSV with a header row; column names are matched
-// case-insensitively against a set of common aliases.
-
 const ALIASES = {
   window_number: ['window_number', 'window', 'w', 'step', 'index', 'n'],
   window_timestamp: ['window_timestamp', 'timestamp', 'time', 'ts', 'datetime'],
@@ -23,7 +18,6 @@ function resolveColumns(headerCells) {
   return map
 }
 
-// Returns { raw, error, rowCount }. On success `error` is null.
 export function parseTelemetryCsv(text) {
   if (!text || !text.trim()) {
     return { raw: null, error: 'Paste some CSV telemetry or load the example.' }
@@ -60,7 +54,7 @@ export function parseTelemetryCsv(text) {
     const p99 = num('p99_latency')
     const retry = num('retry_rate')
     const error = num('error_rate')
-    if (p99 === null || retry === null || error === null) continue // skip malformed rows
+    if (p99 === null || retry === null || error === null) continue
 
     raw.push({
       service_id: 'uploaded',
@@ -83,7 +77,6 @@ export function parseTelemetryCsv(text) {
     }
   }
 
-  // Normalize window numbers to be sequential if they were absent/duplicated.
   raw.forEach((r, i) => {
     if (!Number.isFinite(r.window_number)) r.window_number = i + 1
   })
@@ -91,9 +84,6 @@ export function parseTelemetryCsv(text) {
   return { raw, error: null, rowCount: raw.length }
 }
 
-// A second, distinct scenario (a memory-leak style slow burn on a different
-// service) so "Load example" clearly runs the engine on data other than the
-// built-in incident.
 export const EXAMPLE_CSV = `window,p99_latency,retry_rate,error_rate
 1,135,0.59,0.61
 2,107,0.98,0.31

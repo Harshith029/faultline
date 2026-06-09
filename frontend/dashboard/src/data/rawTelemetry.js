@@ -1,18 +1,3 @@
-// Raw, un-normalized telemetry for service-b across 12 one-minute windows.
-//
-// This is the *input* to the detection engine — actual metric values in their
-// native units, not precomputed z-scores. The engine in lib/detectionEngine.js
-// derives everything else (z-scores, qualified signals, R-score, trigger) from
-// these numbers live. Edit a value here and the whole pipeline recomputes.
-//
-//   p99_latency : milliseconds   (healthy baseline ~100ms)
-//   retry_rate  : percent         (healthy baseline ~0.5%)
-//   error_rate  : percent         (healthy baseline ~0.2%)
-//
-// The scenario: a connection-pool exhaustion on service-b. Latency drifts first,
-// a client retry storm amplifies it, and error rate joins last as the failure
-// propagates downstream — the classic cascade signature.
-
 export const RAW_TELEMETRY = [
   { window_number: 1, window_timestamp: '2026-01-01T10:01:00Z', p99_latency: 112, retry_rate: 0.4, error_rate: 0.63 },
   { window_number: 2, window_timestamp: '2026-01-01T10:02:00Z', p99_latency: 82, retry_rate: 0.67, error_rate: 0.24 },
