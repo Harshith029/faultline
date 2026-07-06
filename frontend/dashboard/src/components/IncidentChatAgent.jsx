@@ -14,7 +14,7 @@ const QA_PAIRS = [
     category: 'Root Cause',
     hint: 'Trace the first failing condition.',
     question: 'Why did service-b fail?',
-    answer: 'Service B experienced connection pool exhaustion triggered by a sustained retry storm. Starting at W5, p99 latency crossed 2 sigma and never recovered. By W7, retry rate joined at 3.5 sigma, so clients were amplifying load through backoff loops faster than the pool could drain. At W8, all three metrics qualified simultaneously, pushing the R score to 3.12 and triggering the alert before the outage.',
+    answer: 'Service B experienced connection pool exhaustion triggered by a sustained retry storm. P99 latency crossed 2 sigma at W5, sustained, and qualified at W6. Retry rate crossed at W7 and qualified at W8 at 3.4 sigma, so clients were amplifying load through backoff loops faster than the pool could drain. With two sustained signals converging at W8, the R score jumped to 3.96 and detection fired — four windows before the outage. Error rate qualified at W9 and did not breach its 2% SLO until W11.',
   },
   {
     id: 'user-load',
@@ -35,7 +35,7 @@ const QA_PAIRS = [
     category: 'Lead Time',
     hint: 'Look for earlier warning signals.',
     question: 'Could this have been caught earlier?',
-    answer: 'Yes, likely at W6. P99 latency had already remained above 2 sigma for three consecutive windows, and retry rate was climbing toward threshold. A lower trigger threshold could have alerted earlier, though that would trade for more false positives.',
+    answer: 'Yes, likely at W6 — that is when p99 latency first qualified after sustaining above 2 sigma for two consecutive windows, with retry rate climbing toward threshold. The counterfactual simulator shows that intervening at W6 or W7 averts the cascade entirely. A lower trigger threshold could have alerted at W6, though that would trade for more false positives.',
   },
   {
     id: 'blast-radius',
