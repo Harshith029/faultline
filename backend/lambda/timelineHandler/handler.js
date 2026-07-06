@@ -1,11 +1,103 @@
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb'
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime'
+import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch'
 import { unmarshall } from '@aws-sdk/util-dynamodb'
 
 const dynamo = new DynamoDBClient({ region: process.env.AWS_REGION })
 const bedrock = new BedrockRuntimeClient({ region: process.env.AWS_REGION })
+const cloudwatch = new CloudWatchClient({ region: process.env.AWS_REGION })
+
+const JSON_HEADERS = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' }
+const LIVE_API_NAME = process.env.LIVE_API_NAME || 'Faultline-API'
+const LIVE_WINDOW_MINUTES = 60
+
+const liveTelemetry = async () => {
+  const end = new Date(Math.floor(Date.now() / 60000) * 60000)
+  const start = new Date(end.getTime() - LIVE_WINDOW_MINUTES * 60000)
+  const dimensions = [{ Name: 'ApiName', Value: LIVE_API_NAME }]
+
+  const result = await cloudwatch.send(new GetMetricDataCommand({
+    StartTime: start,
+    EndTime: end,
+    ScanBy: 'TimestampAscending',
+    MetricDataQueries: [
+      {
+        Id: 'latency',
+        MetricStat: {
+          Metric: { Namespace: 'AWS/ApiGateway', MetricName: 'Latency', Dimensions: dimensions },
+          Period: 60,
+          Stat: 'p99'
+        }
+      },
+      {
+        Id: 'client_errors',
+        MetricStat: {
+          Metric: { Namespace: 'AWS/ApiGateway', MetricName: '4XXError', Dimensions: dimensions },
+          Period: 60,
+          Stat: 'Average'
+        }
+      },
+      {
+        Id: 'server_errors',
+        MetricStat: {
+          Metric: { Namespace: 'AWS/ApiGateway', MetricName: '5XXError', Dimensions: dimensions },
+          Period: 60,
+          Stat: 'Average'
+        }
+      }
+    ]
+  }))
+
+  const series = {}
+  for (const r of result.MetricDataResults) {
+    series[r.Id] = new Map(r.Timestamps.map((t, i) => [new Date(t).getTime(), r.Values[i]]))
+  }
+
+  const raw = []
+  for (let i = 0; i < LIVE_WINDOW_MINUTES; i++) {
+    const t = start.getTime() + i * 60000
+    raw.push({
+      window_number: i + 1,
+      window_timestamp: new Date(t).toISOString(),
+      p99_latency: round2(series.latency?.get(t) ?? 0),
+      retry_rate: round2((series.client_errors?.get(t) ?? 0) * 100),
+      error_rate: round2((series.server_errors?.get(t) ?? 0) * 100)
+    })
+  }
+
+  return {
+    statusCode: 200,
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      service_id: 'live',
+      source: 'cloudwatch',
+      api_name: LIVE_API_NAME,
+      metric_mapping: {
+        p99_latency: 'API Gateway p99 latency (ms)',
+        retry_rate: '4XX client-error rate (%) — retry-pressure proxy',
+        error_rate: '5XX server-error rate (%)'
+      },
+      raw
+    })
+  }
+}
+
+const round2 = (x) => Math.round((x ?? 0) * 100) / 100
 
 export const handler = async (event) => {
+  if (event.queryStringParameters?.source === 'live') {
+    try {
+      return await liveTelemetry()
+    } catch (err) {
+      console.log(JSON.stringify({ event: 'LIVE_TELEMETRY_ERROR', message: err.message }))
+      return {
+        statusCode: 502,
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ error: 'live telemetry unavailable' })
+      }
+    }
+  }
+
   const serviceId = event.queryStringParameters?.service_id
   if (!serviceId || !/^[A-Za-z0-9_-]{1,64}$/.test(serviceId)) {
     return {

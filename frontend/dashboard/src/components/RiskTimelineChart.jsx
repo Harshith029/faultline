@@ -28,6 +28,7 @@ export default function RiskTimelineChart({ windows, activeWindow }) {
 
   const activeRisk = chartData.find((window) => window.window === activeWindow)?.R ?? 0
   const highestRisk = Math.max(...chartData.map((window) => window.R))
+  const outageWindow = chartData.find((window) => window.outage)?.window ?? null
   const riskTone = activeRisk >= 3 ? 'text-rose-300' : activeRisk >= 2.5 ? 'text-amber-300' : 'text-sky-300'
 
   return (
@@ -85,7 +86,7 @@ export default function RiskTimelineChart({ windows, activeWindow }) {
             />
 
             <YAxis
-              domain={[0, 13]}
+              domain={[0, (dataMax) => Math.max(13, Math.ceil(dataMax * 1.1))]}
               stroke="rgba(148,163,184,0.16)"
               tick={{ fill: '#94a3b8', fontSize: 11 }}
               axisLine={false}
@@ -118,13 +119,15 @@ export default function RiskTimelineChart({ windows, activeWindow }) {
               label={{ value: 'Trigger R=3.0', position: 'insideTopRight', fill: '#fca5a5', fontSize: 11 }}
             />
 
-            <ReferenceLine
-              x={12}
-              stroke="#991b1b"
-              strokeWidth={2}
-              strokeDasharray="2 6"
-              label={{ value: 'OUTAGE', position: 'top', fill: '#fda4af', fontSize: 10 }}
-            />
+            {outageWindow != null && (
+              <ReferenceLine
+                x={outageWindow}
+                stroke="#991b1b"
+                strokeWidth={2}
+                strokeDasharray="2 6"
+                label={{ value: 'OUTAGE', position: 'top', fill: '#fda4af', fontSize: 10 }}
+              />
+            )}
 
             <Bar dataKey="R" radius={[10, 10, 4, 4]} isAnimationActive animationDuration={900}>
               {chartData.map((entry) => (

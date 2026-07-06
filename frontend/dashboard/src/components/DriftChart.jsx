@@ -96,7 +96,7 @@ export default function DriftChart({ windows, activeWindow }) {
             Active window W{activeWindow}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
-            <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5">Fixed scale 0-10</span>
+            <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5">Auto scale (min 0-10)</span>
             <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-amber-200">Threshold z=2</span>
             {cascadeWindow && (
               <span className="rounded-full border border-rose-400/20 bg-rose-400/10 px-3 py-1.5 text-rose-200">
@@ -157,7 +157,7 @@ export default function DriftChart({ windows, activeWindow }) {
               />
 
               <YAxis
-                domain={[0, 10]}
+                domain={[0, (dataMax) => Math.max(10, Math.ceil(dataMax * 1.05))]}
                 axisLine={false}
                 tickLine={false}
                 stroke="#64748b"

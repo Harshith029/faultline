@@ -59,7 +59,9 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
 
   for (const key of METRIC_KEYS) {
     const values = raw.map((w) => w[key])
-    baselines[key] = computeBaseline(values, params)
+    const base = computeBaseline(values, params)
+    const absFloor = params.sigmaFloorAbs?.[key] ?? 0
+    baselines[key] = absFloor > base.sigma ? { ...base, sigma: absFloor } : base
     const zs = values.map((v) => zScore(v, baselines[key]))
     qualifiedSeries[key] = qualifyMetric(zs, params)
   }

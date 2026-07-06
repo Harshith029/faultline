@@ -21,6 +21,7 @@ export default function ConfidenceTrendChart({ windows, activeWindow }) {
 
   const currentConf = chartData.find((d) => d.window === activeWindow)
   const confPct = currentConf?.confidencePct ?? 0
+  const alertWindow = chartData.find((d) => d.triggered)?.window ?? null
   let confColor = '#3b82f6'
   if (confPct >= 80) confColor = '#10b981'
   else if (confPct >= 50) confColor = '#f59e0b'
@@ -63,7 +64,7 @@ export default function ConfidenceTrendChart({ windows, activeWindow }) {
             Current classifier certainty for this timeline stage
           </span>
           <span className="text-slate-500">
-            Alert checkpoint at W8
+            {alertWindow ? `Alert checkpoint at W${alertWindow}` : 'No alert in view'}
           </span>
         </div>
 
@@ -109,12 +110,14 @@ export default function ConfidenceTrendChart({ windows, activeWindow }) {
               labelFormatter={(label) => `Window ${label}`}
             />
 
-            <ReferenceLine
-              x={8}
-              stroke="#ef4444"
-              strokeDasharray="3 6"
-              label={{ value: 'ALERT', position: 'top', fill: '#fda4af', fontSize: 10 }}
-            />
+            {alertWindow != null && (
+              <ReferenceLine
+                x={alertWindow}
+                stroke="#ef4444"
+                strokeDasharray="3 6"
+                label={{ value: 'ALERT', position: 'top', fill: '#fda4af', fontSize: 10 }}
+              />
+            )}
 
             <ReferenceLine
               x={activeWindow}

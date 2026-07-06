@@ -76,6 +76,23 @@ test('runDetection reproduces the reference cascade', () => {
   assert.equal(result.windows[11].outage, true)
 })
 
+test('sigmaFloorAbs prevents z-score blowup on near-zero baselines', () => {
+  const flat = Array.from({ length: 10 }, (_, i) => ({
+    window_number: i + 1,
+    window_timestamp: `2026-01-01T10:${String(i + 1).padStart(2, '0')}:00Z`,
+    p99_latency: 0,
+    retry_rate: 0,
+    error_rate: 0,
+  }))
+  flat[8].p99_latency = 12
+  flat[9].p99_latency = 12
+  const noisy = runDetection(flat)
+  assert.ok(noisy.windows[9].metrics.p99_latency_z > 100)
+  const floored = runDetection(flat, { ...DEFAULT_PARAMS, sigmaFloorAbs: { p99_latency: 25, retry_rate: 0.5, error_rate: 0.5 } })
+  assert.ok(floored.windows[9].metrics.p99_latency_z < 1)
+  assert.equal(floored.detectionWindow, null)
+})
+
 test('runDetection respects a custom trigger threshold', () => {
   const result = runDetection(RAW_TELEMETRY, { ...DEFAULT_PARAMS, triggerThreshold: 100 })
   assert.equal(result.detectionWindow, null)

@@ -78,6 +78,23 @@ error-rate SLO alert fires 3 windows after FAULTLINE.
 `scripts/generateDataset.mjs` — regenerate it after changing `rawTelemetry.js`
 or engine parameters; never edit it by hand.
 
+## Live mode (real telemetry)
+
+`GET /timeline?source=live` makes the Lambda pull the last 60 one-minute
+windows of **real CloudWatch metrics for this deployment's own API Gateway**
+(`Faultline-API`): p99 latency, 4XX rate (retry-pressure proxy), and 5XX rate.
+The raw series is returned to the browser, where the same detection engine
+runs on it with `sigmaFloorAbs` floors (100 ms / 2% / 2%) to keep sparse,
+low-traffic baselines from inflating z-scores. The dashboard's Live toggle
+switches the entire pipeline to this data; scenario-bound panels (narration,
+chat, architecture map, counterfactual) hide because they describe the curated
+incident, not the live system. FAULTLINE monitors its own production
+infrastructure — cold starts and deploy-time 5XX errors are visible in the
+live data.
+
+Required IAM: `cloudwatch:GetMetricData` on `FaultlineTimelineRole`
+(inline policy `FaultlineCloudWatchRead`). Lambda env: `LIVE_API_NAME`.
+
 ## Request flow (AWS enrichment path)
 
 ```
@@ -128,7 +145,8 @@ fallback hypothesis (consistent with the engine's numbers) is used instead.
 
 ## Known boundaries
 
-- Telemetry is simulated; there is no streaming ingestion path (roadmap item).
+- The scenario timeline is curated; live mode ingests real CloudWatch metrics
+  on demand, but there is no continuous streaming/alerting path yet (roadmap).
 - The API endpoint is unauthenticated with permissive CORS — acceptable for a
   public demo, not for production (add API keys/usage plans before real use).
 - `AIInsightPanel` narration and `IncidentChatAgent` answers are curated copy
