@@ -12,7 +12,8 @@ $distDir = Join-Path $dashboard "dist"
 
 Write-Host "Building with VITE_API_URL=$ApiUrl"
 $env:VITE_API_URL = $ApiUrl
-npm --prefix $dashboard run build
+# cmd /c merges stderr so vite warnings don't become terminating errors under EAP=Stop
+cmd /c "npm --prefix `"$dashboard`" run build 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "build failed" }
 
 Add-Type -AssemblyName System.IO.Compression
