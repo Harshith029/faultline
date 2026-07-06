@@ -5,6 +5,8 @@
 
 **Live Demo:** https://production.YOUR_AMPLIFY_APP_ID.amplifyapp.com/
 
+[![CI](https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshith029/faultline/actions/workflows/ci.yml) · [Architecture docs](docs/ARCHITECTURE.md)
+
 ---
 
 > **This repository is a showcase of FAULTLINE v1.**

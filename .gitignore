@@ -29,3 +29,6 @@ Thumbs.db
 
 # Vite cache
 frontend/dashboard/.vite/
+
+# Local tooling
+.claude/
