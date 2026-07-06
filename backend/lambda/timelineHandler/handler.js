@@ -7,11 +7,11 @@ const bedrock = new BedrockRuntimeClient({ region: process.env.AWS_REGION })
 
 export const handler = async (event) => {
   const serviceId = event.queryStringParameters?.service_id
-  if (!serviceId) {
+  if (!serviceId || !/^[A-Za-z0-9_-]{1,64}$/.test(serviceId)) {
     return {
       statusCode: 400,
       headers: { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'service_id required' })
+      body: JSON.stringify({ error: 'service_id required: 1-64 alphanumeric, dash, or underscore characters' })
     }
   }
 
