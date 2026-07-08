@@ -44,6 +44,7 @@ export default function FaultlineDashboard() {
   const [liveLoading, setLiveLoading] = useState(false)
   const [liveError, setLiveError] = useState(null)
 
+  const liveAvailable = Boolean(import.meta.env.VITE_API_URL)
   const isLive = mode === 'live' && Array.isArray(liveRaw) && liveRaw.length > 0
 
   const engine = useMemo(
@@ -104,7 +105,7 @@ export default function FaultlineDashboard() {
       </div>
 
       <MetadataBar
-        serviceId={isLive ? 'Faultline-API' : 'B'}
+        serviceId={isLive ? 'Live' : 'B'}
         activeWindow={activeWindow}
         triggered={activeWindowData.triggered}
         outage={activeWindowData.outage}
@@ -113,49 +114,51 @@ export default function FaultlineDashboard() {
       />
 
       <main className="relative z-10 mx-auto flex w-full max-w-7xl flex-col gap-7 px-4 py-8 sm:px-6 lg:gap-8 lg:px-8 lg:py-10">
-        <section className={`${sectionClass} section-reveal`}>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
-                Data source
+        {liveAvailable && (
+          <section className={`${sectionClass} section-reveal`}>
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+                  Data source
+                </div>
+                <div className="mt-2 text-sm text-slate-400">
+                  {isLive
+                    ? 'Real CloudWatch telemetry from the configured API Gateway, one-minute windows over the last hour. Retry pressure is proxied by the 4XX client-error rate. Detection runs live in your browser.'
+                    : 'Curated 12-window cascade scenario. Switch to live mode to run the same engine on real production telemetry.'}
+                </div>
               </div>
-              <div className="mt-2 text-sm text-slate-400">
-                {isLive
-                  ? 'Real CloudWatch telemetry from this deployment’s own API Gateway, one-minute windows over the last hour. Retry pressure is proxied by the 4XX client-error rate. Detection runs live in your browser.'
-                  : 'Curated 12-window cascade scenario. Switch to live mode to run the same engine on this system’s real production telemetry.'}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={switchToScenario}
+                  className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                    !isLive
+                      ? 'border-sky-400/40 bg-sky-500/15 text-sky-100'
+                      : 'border-white/10 bg-white/[0.03] text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Incident scenario
+                </button>
+                <button
+                  onClick={loadLive}
+                  disabled={liveLoading}
+                  className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
+                    isLive
+                      ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100'
+                      : 'border-white/10 bg-white/[0.03] text-slate-400 hover:text-white'
+                  } ${liveLoading ? 'cursor-wait opacity-60' : ''}`}
+                >
+                  <span className={`h-2 w-2 rounded-full ${isLive ? 'status-pulse bg-emerald-400' : 'bg-slate-500'}`} />
+                  {liveLoading ? 'Fetching CloudWatch…' : isLive ? 'Live · refresh' : 'Live telemetry'}
+                </button>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={switchToScenario}
-                className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
-                  !isLive
-                    ? 'border-sky-400/40 bg-sky-500/15 text-sky-100'
-                    : 'border-white/10 bg-white/[0.03] text-slate-400 hover:text-white'
-                }`}
-              >
-                Incident scenario
-              </button>
-              <button
-                onClick={loadLive}
-                disabled={liveLoading}
-                className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium transition ${
-                  isLive
-                    ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-100'
-                    : 'border-white/10 bg-white/[0.03] text-slate-400 hover:text-white'
-                } ${liveLoading ? 'cursor-wait opacity-60' : ''}`}
-              >
-                <span className={`h-2 w-2 rounded-full ${isLive ? 'status-pulse bg-emerald-400' : 'bg-slate-500'}`} />
-                {liveLoading ? 'Fetching CloudWatch…' : isLive ? 'Live · refresh' : 'Live: Faultline-API'}
-              </button>
-            </div>
-          </div>
-          {liveError && (
-            <div className="mt-4 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-              Live telemetry unavailable: {liveError}
-            </div>
-          )}
-        </section>
+            {liveError && (
+              <div className="mt-4 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                Live telemetry unavailable: {liveError}
+              </div>
+            )}
+          </section>
+        )}
 
         <section className={`${sectionClass} section-reveal reveal-delay-1`}>
           <TimelineScrubber
