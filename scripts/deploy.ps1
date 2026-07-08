@@ -1,9 +1,12 @@
 param(
-  [string]$AppId = "YOUR_AMPLIFY_APP_ID",
-  [string]$Region = "ap-south-1",
-  [string]$Branch = "production",
-  [string]$ApiUrl = "https://YOUR_API_ID.execute-api.ap-south-1.amazonaws.com/prod"
+  [string]$AppId = $env:FAULTLINE_APP_ID,
+  [string]$Region = $(if ($env:FAULTLINE_REGION) { $env:FAULTLINE_REGION } else { "ap-south-1" }),
+  [string]$Branch = $(if ($env:FAULTLINE_BRANCH) { $env:FAULTLINE_BRANCH } else { "production" }),
+  [string]$ApiUrl = $env:VITE_API_URL
 )
+
+if (-not $AppId) { throw "Set FAULTLINE_APP_ID (your Amplify app id) or pass -AppId" }
+if (-not $ApiUrl) { throw "Set VITE_API_URL (your API Gateway base URL) or pass -ApiUrl" }
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot

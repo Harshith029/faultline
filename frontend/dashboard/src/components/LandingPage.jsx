@@ -235,7 +235,7 @@ export default function LandingPage({ onLaunch }) {
           <div className="flex flex-wrap items-center justify-center gap-6">
             <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="transition hover:text-slate-300">GitHub</a>
             <a href="mailto:harshith.pali3286@gmail.com" className="transition hover:text-slate-300">Contact</a>
-            <span>Showcase build — not licensed for commercial use</span>
+            <span>Open source — MIT licensed</span>
           </div>
         </div>
       </footer>

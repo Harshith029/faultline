@@ -134,10 +134,10 @@ fallback hypothesis (consistent with the engine's numbers) is used instead.
 
 ## Deployment
 
-- **Frontend:** AWS Amplify app `YOUR_AMPLIFY_APP_ID` (ap-south-1), branch
-  `production`, **manual deployments** (the app is not git-connected). Build
-  with `VITE_API_URL` set, zip the *contents* of `dist/` with forward-slash
-  entry names, then `create-deployment` → PUT zip → `start-deployment`.
+- **Frontend:** any static host serves `dist/`. For AWS Amplify manual
+  deployments, `scripts/deploy.ps1` automates it (set `FAULTLINE_APP_ID` and
+  `VITE_API_URL` env vars): build, zip the *contents* of `dist/` with
+  forward-slash entry names, `create-deployment` → PUT zip → `start-deployment`.
 - **Backend:** Lambda deployed manually; repo changes to `handler.js` do not
   take effect until re-deployed.
 - **Data:** `scripts/seed.js` loads the generated dataset from S3 into
