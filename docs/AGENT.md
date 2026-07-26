@@ -44,6 +44,39 @@ historyWindows × intervalSeconds  >  longest expected incident
 Defaults (40 × 60s = 40 minutes) suit typical request-path services. For slow
 burns — memory leaks, disk fill — raise `historyWindows` substantially.
 
+## Choosing metrics
+
+`detector.metrics` decides what the engine analyzes. The defaults —
+`p99_latency`, `retry_rate`, `error_rate` — describe a request-path service, but
+nothing in the engine is tied to them:
+
+```json
+"detector": {
+  "metrics": ["queue_depth", "consumer_lag", "gc_pause_ms"],
+  "minSignals": 2
+}
+```
+
+Your source must emit a numeric field per metric name; missing or non-numeric
+values coerce to 0 rather than throwing.
+
+Two rules make a metric set work well:
+
+1. **Pick signals that move for different reasons but fail together.** The
+   detector's whole advantage is convergence, so metrics that are near-duplicates
+   of one another (p95 and p99 latency) inflate the signal count without adding
+   evidence. A saturation metric, a work-backlog metric, and an outcome metric is
+   a strong trio.
+2. **Every metric should be "higher is worse."** Detection is one-sided: only
+   upward drift qualifies. If a metric fails by dropping — cache hit rate,
+   throughput, success rate — invert it at the source (`100 - hit_rate`) so a
+   degradation reads as an increase.
+
+`minSignals` (default 2) is the convergence requirement and cannot exceed the
+number of metrics configured. With a single metric you must set it to 1, which
+turns FAULTLINE into a sustained-threshold detector and measurably increases
+false positives.
+
 ## Tuning to your traffic
 
 Start with the defaults and one week of observation, then adjust:

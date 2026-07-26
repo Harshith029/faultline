@@ -10,10 +10,14 @@ export const DEFAULT_CONFIG = {
     baselineWindows: 10,
     zThreshold: 2.0,
     minSustain: 2,
+    minSignals: 2,
     triggerThreshold: 3.0,
     criticalityWeight: 1.0,
     sigmaFloorRatio: 0.1,
     sigmaFloorAbs: null,
+    // Any set of numeric metrics your source emits. The engine is agnostic;
+    // these three are simply the defaults the reference scenario uses.
+    metrics: ['p99_latency', 'retry_rate', 'error_rate'],
   },
   alerting: {
     cooldownSeconds: 300,
@@ -42,6 +46,7 @@ const NUMERIC_RULES = {
   'detector.baselineWindows': { min: 2, integer: true },
   'detector.zThreshold': { min: 0 },
   'detector.minSustain': { min: 1, integer: true },
+  'detector.minSignals': { min: 1, integer: true },
   'detector.triggerThreshold': { min: 0 },
   'detector.criticalityWeight': { min: 0 },
   'detector.sigmaFloorRatio': { min: 0 },
@@ -101,6 +106,23 @@ export function validateConfig(config) {
 
   if (config.detector?.sigmaFloorAbs != null && !isPlainObject(config.detector.sigmaFloorAbs)) {
     errors.push('detector.sigmaFloorAbs must be an object of metric -> minimum sigma, or null')
+  }
+
+  const metrics = config.detector?.metrics
+  if (!Array.isArray(metrics) || metrics.length === 0) {
+    errors.push('detector.metrics must be a non-empty array of metric names')
+  } else {
+    if (metrics.some((m) => typeof m !== 'string' || m.trim() === '')) {
+      errors.push('detector.metrics entries must be non-empty strings')
+    }
+    if (new Set(metrics).size !== metrics.length) {
+      errors.push('detector.metrics must not contain duplicates')
+    }
+    if (Number.isFinite(config.detector?.minSignals) && config.detector.minSignals > metrics.length) {
+      errors.push(
+        `detector.minSignals (${config.detector.minSignals}) cannot exceed the number of metrics (${metrics.length})`
+      )
+    }
   }
 
   if (errors.length) {
@@ -168,6 +190,8 @@ export function detectorParams(config) {
     baselineWindows: d.baselineWindows,
     zThreshold: d.zThreshold,
     minSustain: d.minSustain,
+    minSignals: d.minSignals,
+    metrics: d.metrics,
     sigmaFloorRatio: d.sigmaFloorRatio,
     sigmaFloorAbs: d.sigmaFloorAbs ?? undefined,
     criticalityWeight: d.criticalityWeight,

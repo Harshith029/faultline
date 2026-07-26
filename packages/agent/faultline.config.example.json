@@ -20,6 +20,8 @@
     "baselineWindows": 15,
     "zThreshold": 2.0,
     "minSustain": 2,
+    "minSignals": 2,
+    "metrics": ["p99_latency", "retry_rate", "error_rate"],
     "triggerThreshold": 3.0,
     "criticalityWeight": 1.0,
     "sigmaFloorRatio": 0.1,

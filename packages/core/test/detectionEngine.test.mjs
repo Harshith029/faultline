@@ -12,6 +12,7 @@ import {
   applyMitigation,
   runCounterfactual,
   MITIGATIONS,
+  metricMeta,
 } from '../detectionEngine.js'
 import { RAW_TELEMETRY } from '../fixtures/rawTelemetry.js'
 
@@ -91,6 +92,57 @@ test('sigmaFloorAbs prevents z-score blowup on near-zero baselines', () => {
   const floored = runDetection(flat, { ...DEFAULT_PARAMS, sigmaFloorAbs: { p99_latency: 25, retry_rate: 0.5, error_rate: 0.5 } })
   assert.ok(floored.windows[9].metrics.p99_latency_z < 1)
   assert.equal(floored.detectionWindow, null)
+})
+
+test('detects on an arbitrary metric set the project has never seen', () => {
+  const params = {
+    ...DEFAULT_PARAMS,
+    metrics: ['queue_depth', 'cpu_saturation', 'gc_pause_ms'],
+    sloMetric: 'queue_depth',
+    baselineWindows: 4,
+  }
+  const raw = []
+  for (let i = 1; i <= 12; i++) {
+    const escalating = i >= 6 ? (i - 5) * 3 : 0
+    raw.push({
+      window_number: i,
+      queue_depth: 10 + (i % 2) + escalating * 2,
+      cpu_saturation: 40 + (i % 3) + escalating * 3,
+      gc_pause_ms: 5 + (i % 2) + escalating,
+    })
+  }
+
+  const result = runDetection(raw, params)
+  assert.notEqual(result.detectionWindow, null, 'a cascade in custom metrics should be detected')
+  const latest = result.windows.at(-1)
+  assert.ok('queue_depth_z' in latest.metrics)
+  assert.ok('cpu_saturation_z' in latest.metrics)
+  assert.equal(latest.raw.queue_depth, raw.at(-1).queue_depth)
+  assert.ok(latest.qualified_signals.every((s) => s.metric.endsWith('_z')))
+  assert.ok(!('p99_latency_z' in latest.metrics), 'default metrics must not leak in')
+})
+
+test('metricMeta derives a readable label for unknown metrics', () => {
+  assert.equal(metricMeta('p99_latency').label, 'P99 latency')
+  assert.equal(metricMeta('queue_depth').label, 'Queue depth')
+  assert.equal(metricMeta('queue_depth').zKey, 'queue_depth_z')
+})
+
+test('minSignals enforces convergence: one signal cannot trigger', () => {
+  const raw = []
+  for (let i = 1; i <= 12; i++) {
+    raw.push({
+      window_number: i,
+      p99_latency: i >= 6 ? 400 : 100 + (i % 2),
+      retry_rate: 0.5 + (i % 2) * 0.01,
+      error_rate: 0.2 + (i % 2) * 0.01,
+    })
+  }
+  const lone = runDetection(raw, { ...DEFAULT_PARAMS, minSignals: 2 })
+  assert.equal(lone.detectionWindow, null, 'a single extreme metric must not trigger')
+
+  const permissive = runDetection(raw, { ...DEFAULT_PARAMS, minSignals: 1 })
+  assert.notEqual(permissive.detectionWindow, null, 'minSignals=1 restores single-signal alerting')
 })
 
 test('runDetection respects a custom trigger threshold', () => {

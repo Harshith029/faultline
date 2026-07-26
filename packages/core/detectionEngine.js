@@ -7,15 +7,31 @@ export const DEFAULT_PARAMS = {
   triggerThreshold: 3.0,
   outageThreshold: 9.0,
   minSignals: 2,
+  metrics: ['p99_latency', 'retry_rate', 'error_rate'],
+  sloMetric: 'error_rate',
 }
 
-const METRIC_KEYS = ['p99_latency', 'retry_rate', 'error_rate']
+const METRIC_KEYS = DEFAULT_PARAMS.metrics
 
 export const METRIC_META = {
   p99_latency: { label: 'P99 latency', unit: 'ms', zKey: 'p99_latency_z' },
   retry_rate: { label: 'Retry rate', unit: '%', zKey: 'retry_rate_z' },
   error_rate: { label: 'Error rate', unit: '%', zKey: 'error_rate_z' },
 }
+
+const humanize = (metric) =>
+  metric.replace(/[_-]+/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+
+/**
+ * Descriptor for any metric, including ones this project has never seen.
+ * The engine is metric-agnostic: `params.metrics` decides what is analyzed.
+ */
+export function metricMeta(metric) {
+  return METRIC_META[metric] ?? { label: humanize(metric), unit: '', zKey: `${metric}_z` }
+}
+
+const metricsOf = (params) =>
+  Array.isArray(params?.metrics) && params.metrics.length > 0 ? params.metrics : METRIC_KEYS
 
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length
 
@@ -55,11 +71,12 @@ export function confidenceFromRisk(R) {
 }
 
 export function runDetection(raw, params = DEFAULT_PARAMS) {
+  const metrics = metricsOf(params)
   const baselines = {}
   const qualifiedSeries = {}
 
-  for (const key of METRIC_KEYS) {
-    const values = raw.map((w) => w[key])
+  for (const key of metrics) {
+    const values = raw.map((w) => Number(w[key]) || 0)
     const base = computeBaseline(values, params)
     const absFloor = params.sigmaFloorAbs?.[key] ?? 0
     baselines[key] = absFloor > base.sigma ? { ...base, sigma: absFloor } : base
@@ -68,14 +85,17 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
   }
 
   const windows = raw.map((w, i) => {
-    const z = {}
+    const rawValues = {}
+    const zValues = {}
     const qualified_signals = []
-    for (const key of METRIC_KEYS) {
+
+    for (const key of metrics) {
       const cell = qualifiedSeries[key][i]
-      z[key] = cell.z
+      rawValues[key] = w[key]
+      zValues[metricMeta(key).zKey] = round2(cell.z)
       if (cell.qualified) {
         qualified_signals.push({
-          metric: METRIC_META[key].zKey,
+          metric: metricMeta(key).zKey,
           z_score: round1(cell.z),
           windows_sustained: cell.sustained,
         })
@@ -91,16 +111,8 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
       service_id: w.service_id ?? 'B',
       window_number: w.window_number,
       window_timestamp: w.window_timestamp,
-      raw: {
-        p99_latency: w.p99_latency,
-        retry_rate: w.retry_rate,
-        error_rate: w.error_rate,
-      },
-      metrics: {
-        p99_latency_z: round2(z.p99_latency),
-        retry_rate_z: round2(z.retry_rate),
-        error_rate_z: round2(z.error_rate),
-      },
+      raw: rawValues,
+      metrics: zValues,
       qualified_signals,
       signal_count: qualified_signals.length,
       R_score: round2(R),
@@ -120,15 +132,17 @@ export function runBaselineDetectors(detectionResult, opts = {}) {
   const { windows } = detectionResult
   const sloErrorRatePct = opts.sloErrorRatePct ?? 2.0
   const singleMetricZ = opts.singleMetricZ ?? 3.0
+  const sloMetric = opts.sloMetric ?? detectionResult.params?.sloMetric ?? 'error_rate'
 
-  const staticSLO = windows.find((w) => w.raw.error_rate >= sloErrorRatePct) ?? null
+  const staticSLO =
+    windows.find((w) => Number(w.raw?.[sloMetric]) >= sloErrorRatePct) ?? null
   const singleMetric = windows.find((w) =>
     Object.values(w.metrics).some((z) => z >= singleMetricZ)
   ) ?? null
 
   return {
     staticSLO: staticSLO
-      ? { window: staticSLO.window_number, rule: `error rate ≥ ${sloErrorRatePct}%` }
+      ? { window: staticSLO.window_number, rule: `${metricMeta(sloMetric).label.toLowerCase()} ≥ ${sloErrorRatePct}` }
       : null,
     singleMetric: singleMetric
       ? { window: singleMetric.window_number, rule: `any single metric ≥ ${singleMetricZ}σ` }
@@ -173,9 +187,10 @@ export const MITIGATIONS = {
 
 export function applyMitigation(raw, { window, mitigation = 'circuit_breaker', params = DEFAULT_PARAMS }) {
   const profile = MITIGATIONS[mitigation] ?? MITIGATIONS.circuit_breaker
+  const metrics = metricsOf(params)
   const baselineMean = {}
-  for (const k of METRIC_KEYS) {
-    baselineMean[k] = computeBaseline(raw.map((w) => w[k]), params).mean
+  for (const k of metrics) {
+    baselineMean[k] = computeBaseline(raw.map((w) => Number(w[k]) || 0), params).mean
   }
   const interventionRow = raw[window - 1]
 
@@ -183,9 +198,11 @@ export function applyMitigation(raw, { window, mitigation = 'circuit_breaker', p
     if (w.window_number < window) return { ...w }
     const steps = w.window_number - window
     const out = { ...w }
-    for (const k of METRIC_KEYS) {
-      const excess = interventionRow[k] - baselineMean[k]
-      const decayed = excess * Math.pow(profile.decay[k], steps)
+    for (const k of metrics) {
+      // Metrics with no explicit recovery profile fall back to a moderate decay.
+      const rate = profile.decay[k] ?? 0.5
+      const excess = (Number(interventionRow[k]) || 0) - baselineMean[k]
+      const decayed = excess * Math.pow(rate, steps)
       out[k] = round2(baselineMean[k] + Math.max(decayed, 0))
     }
     return out

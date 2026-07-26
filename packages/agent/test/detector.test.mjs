@@ -89,6 +89,58 @@ test('missing or non-numeric metrics are coerced rather than crashing', () => {
   assert.equal(result.evaluation.triggered, false)
 })
 
+test('the agent detects on a custom metric set end to end', () => {
+  const custom = detectorParams(
+    loadConfig({
+      env: {},
+      overrides: {
+        detector: {
+          metrics: ['queue_depth', 'consumer_lag'],
+          minSignals: 2,
+          baselineWindows: 8,
+          minSustain: 2,
+          historyWindows: 60,
+        },
+      },
+    })
+  )
+  const detector = new RollingDetector({ params: custom, historyWindows: 60, logger: silentLogger })
+
+  let fired = null
+  for (let i = 1; i <= 24; i++) {
+    const escalating = i >= 12 ? (i - 11) * 4 : 0
+    const [result] = detector.ingest([
+      {
+        service: 'ingest-worker',
+        queue_depth: 100 + (i % 3) + escalating * 6,
+        consumer_lag: 20 + (i % 2) + escalating * 3,
+      },
+    ])
+    if (result.status === 'evaluated' && result.evaluation.triggered && fired === null) fired = i
+  }
+
+  assert.notEqual(fired, null, 'a queue/lag cascade should be detected')
+  assert.ok(fired > 12, 'detection must not precede the fault')
+  const windows = detector.windowsFor('ingest-worker')
+  assert.ok('queue_depth_z' in windows.at(-1).metrics)
+  assert.ok(!('p99_latency_z' in windows.at(-1).metrics))
+})
+
+test('config rejects minSignals larger than the metric set', () => {
+  assert.throws(
+    () => loadConfig({ env: {}, overrides: { detector: { metrics: ['only_one'], minSignals: 2 } } }),
+    /cannot exceed the number of metrics/
+  )
+})
+
+test('config rejects an empty or duplicated metric list', () => {
+  assert.throws(() => loadConfig({ env: {}, overrides: { detector: { metrics: [] } } }), /non-empty array/)
+  assert.throws(
+    () => loadConfig({ env: {}, overrides: { detector: { metrics: ['a', 'a'] } } }),
+    /must not contain duplicates/
+  )
+})
+
 test('samples without a service are ignored', () => {
   const detector = new RollingDetector({ params: params(), historyWindows: 60, logger: silentLogger })
   const results = detector.ingest([{ p99_latency: 100 }, null, undefined])

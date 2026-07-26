@@ -74,6 +74,20 @@ Everything is driven by one config file. Copy [`packages/agent/faultline.config.
 }
 ```
 
+**Your own metrics, not just these three.** Latency/retries/errors are only the defaults. The engine is metric-agnostic — give it any numeric signals your system emits:
+
+```json
+{
+  "detector": {
+    "metrics": ["queue_depth", "consumer_lag", "gc_pause_ms"],
+    "minSignals": 2,
+    "sigmaFloorAbs": { "queue_depth": 50, "consumer_lag": 100, "gc_pause_ms": 5 }
+  }
+}
+```
+
+Convergence scoring works identically: any two of those drifting together opens an incident.
+
 **Any HTTP endpoint you already have** — `mapping` renames incoming fields, so an existing internal metrics route usually needs no new code:
 
 ```json
@@ -194,6 +208,8 @@ An incident-analysis UI over the same engine: scrub a cascade window by window, 
 | Key | Default | Notes |
 |---|---|---|
 | `source.type` | `synthetic` | `synthetic` · `prometheus` · `http` · `cloudwatch` |
+| `detector.metrics` | latency/retry/error | Any numeric signals your source emits |
+| `detector.minSignals` | `2` | Qualified signals required to trigger — enforces convergence |
 | `detector.intervalSeconds` | `60` | Collection cadence |
 | `detector.historyWindows` | `40` | Rolling buffer size per service |
 | `detector.baselineWindows` | `10` | Oldest N windows form the baseline |
@@ -224,7 +240,7 @@ docs/               architecture and operations
 ## Testing
 
 ```bash
-npm test              # 98 unit + integration tests
+npm test              # 104 unit + integration tests
 npm run verify:engine # reference cascade assertion
 npm run benchmark     # precision/recall/lead time vs baseline detectors
 ```

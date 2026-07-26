@@ -6,19 +6,28 @@ const ALIASES = {
   error_rate: ['error_rate', 'error', 'errors', 'error_rate_pct', 'error_pct', 'err_rate'],
 }
 
-const REQUIRED_METRICS = ['p99_latency', 'retry_rate', 'error_rate']
+const DEFAULT_METRICS = ['p99_latency', 'retry_rate', 'error_rate']
 
-function resolveColumns(headerCells) {
+function resolveColumns(headerCells, metrics) {
   const normalized = headerCells.map((h) => h.trim().toLowerCase().replace(/\s+/g, '_'))
   const map = {}
-  for (const [canonical, aliases] of Object.entries(ALIASES)) {
-    const idx = normalized.findIndex((h) => aliases.includes(h))
-    if (idx !== -1) map[canonical] = idx
+
+  for (const field of ['window_number', 'window_timestamp']) {
+    const idx = normalized.findIndex((h) => ALIASES[field].includes(h))
+    if (idx !== -1) map[field] = idx
   }
+
+  // Known metrics match their aliases; anything else matches its exact column.
+  for (const metric of metrics) {
+    const accepted = ALIASES[metric] ?? [metric.toLowerCase()]
+    const idx = normalized.findIndex((h) => accepted.includes(h))
+    if (idx !== -1) map[metric] = idx
+  }
+
   return map
 }
 
-export function parseTelemetryCsv(text) {
+export function parseTelemetryCsv(text, { metrics = DEFAULT_METRICS } = {}) {
   if (!text || !text.trim()) {
     return { raw: null, error: 'Paste some CSV telemetry or load the example.' }
   }
@@ -34,27 +43,31 @@ export function parseTelemetryCsv(text) {
 
   const delimiter = lines[0].includes('\t') ? '\t' : ','
   const header = lines[0].split(delimiter)
-  const cols = resolveColumns(header)
+  const cols = resolveColumns(header, metrics)
 
-  const missing = REQUIRED_METRICS.filter((m) => !(m in cols))
+  const missing = metrics.filter((m) => !(m in cols))
   if (missing.length) {
     return {
       raw: null,
-      error: `Missing required column(s): ${missing.join(', ')}. Expected headers like: p99_latency, retry_rate, error_rate.`,
+      error: `Missing required column(s): ${missing.join(', ')}. Expected headers like: ${metrics.join(', ')}.`,
     }
   }
 
   const raw = []
   for (let i = 1; i < lines.length; i++) {
     const cells = lines[i].split(delimiter)
-    const num = (key) => {
-      const v = parseFloat(cells[cols[key]])
-      return Number.isFinite(v) ? v : null
+    const values = {}
+    let complete = true
+
+    for (const metric of metrics) {
+      const parsed = parseFloat(cells[cols[metric]])
+      if (!Number.isFinite(parsed)) {
+        complete = false
+        break
+      }
+      values[metric] = parsed
     }
-    const p99 = num('p99_latency')
-    const retry = num('retry_rate')
-    const error = num('error_rate')
-    if (p99 === null || retry === null || error === null) continue
+    if (!complete) continue
 
     raw.push({
       service_id: 'uploaded',
@@ -64,9 +77,7 @@ export function parseTelemetryCsv(text) {
           : raw.length + 1,
       window_timestamp:
         'window_timestamp' in cols ? String(cells[cols.window_timestamp]).trim() : undefined,
-      p99_latency: p99,
-      retry_rate: retry,
-      error_rate: error,
+      ...values,
     })
   }
 

@@ -1,7 +1,7 @@
 import { runDetection } from '@faultline/core'
 import { WindowBuffer } from './buffer.js'
 
-const METRICS = ['p99_latency', 'retry_rate', 'error_rate']
+const DEFAULT_METRICS = ['p99_latency', 'retry_rate', 'error_rate']
 
 /**
  * Runs the deterministic engine over a rolling window buffer, once per tick.
@@ -14,6 +14,7 @@ const METRICS = ['p99_latency', 'retry_rate', 'error_rate']
 export class RollingDetector {
   constructor({ params, historyWindows = 40, logger }) {
     this.params = params
+    this.metrics = params.metrics?.length ? params.metrics : DEFAULT_METRICS
     this.historyWindows = historyWindows
     this.logger = logger
     this.buffer = new WindowBuffer(historyWindows)
@@ -21,12 +22,12 @@ export class RollingDetector {
     this.minWindows = params.baselineWindows + params.minSustain
   }
 
-  static normalizeSample(sample) {
+  normalizeSample(sample) {
     const out = {
       service: String(sample.service),
       timestamp: sample.timestamp ?? new Date().toISOString(),
     }
-    for (const metric of METRICS) {
+    for (const metric of this.metrics) {
       const value = Number(sample[metric])
       out[metric] = Number.isFinite(value) ? value : 0
     }
@@ -39,7 +40,7 @@ export class RollingDetector {
 
     for (const raw of samples ?? []) {
       if (raw?.service === undefined || raw.service === null) continue
-      const sample = RollingDetector.normalizeSample(raw)
+      const sample = this.normalizeSample(raw)
       this.buffer.push(sample.service, sample)
       seen.add(sample.service)
     }
@@ -56,14 +57,15 @@ export class RollingDetector {
         continue
       }
 
-      const windows = series.map((sample, i) => ({
-        service_id: service,
-        window_number: i + 1,
-        window_timestamp: sample.timestamp,
-        p99_latency: sample.p99_latency,
-        retry_rate: sample.retry_rate,
-        error_rate: sample.error_rate,
-      }))
+      const windows = series.map((sample, i) => {
+        const window = {
+          service_id: service,
+          window_number: i + 1,
+          window_timestamp: sample.timestamp,
+        }
+        for (const metric of this.metrics) window[metric] = sample[metric]
+        return window
+      })
 
       const detection = runDetection(windows, this.params)
       this.detections.set(service, { detection, updatedAt: new Date(nowMs).toISOString() })

@@ -1,6 +1,7 @@
 export {
   DEFAULT_PARAMS,
   METRIC_META,
+  metricMeta,
   MITIGATIONS,
   computeBaseline,
   zScore,

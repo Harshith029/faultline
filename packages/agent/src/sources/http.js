@@ -11,11 +11,14 @@ export function createHttpSource(options = {}, ctx = {}) {
   if (!options.url) throw new Error('http source requires "url"')
   const timeoutMs = options.timeoutMs ?? 10000
   const headers = options.headers ?? {}
+  const metrics = options.metrics ?? ctx.config?.detector?.metrics ?? [
+    'p99_latency',
+    'retry_rate',
+    'error_rate',
+  ]
   const mapping = {
     service: 'service',
-    p99_latency: 'p99_latency',
-    retry_rate: 'retry_rate',
-    error_rate: 'error_rate',
+    ...Object.fromEntries(metrics.map((m) => [m, m])),
     ...(options.mapping ?? {}),
   }
   const logger = ctx.logger
@@ -35,13 +38,11 @@ export function createHttpSource(options = {}, ctx = {}) {
 
       const timestamp = new Date().toISOString()
       const samples = rows
-        .map((row) => ({
-          service: row[mapping.service],
-          timestamp: row.timestamp ?? timestamp,
-          p99_latency: Number(row[mapping.p99_latency]),
-          retry_rate: Number(row[mapping.retry_rate]),
-          error_rate: Number(row[mapping.error_rate]),
-        }))
+        .map((row) => {
+          const sample = { service: row[mapping.service], timestamp: row.timestamp ?? timestamp }
+          for (const metric of metrics) sample[metric] = Number(row[mapping[metric]])
+          return sample
+        })
         .filter((s) => s.service !== undefined && s.service !== null)
 
       if (samples.length === 0) logger?.warn('source.empty_response', { url: options.url })
