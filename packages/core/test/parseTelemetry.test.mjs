@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseTelemetryCsv, EXAMPLE_CSV } from '../src/lib/parseTelemetry.js'
-import { runDetection } from '../src/lib/detectionEngine.js'
+import { parseTelemetryCsv, EXAMPLE_CSV } from '../parseTelemetry.js'
+import { runDetection } from '../detectionEngine.js'
 
 const VALID = `window,p99_latency,retry_rate,error_rate
 1,100,0.5,0.2

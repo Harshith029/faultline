@@ -1,4 +1,4 @@
-import { METRIC_META } from '../lib/detectionEngine'
+import { METRIC_META } from '@faultline/core'
 
 const METRIC_ORDER = ['p99_latency', 'retry_rate', 'error_rate']
 

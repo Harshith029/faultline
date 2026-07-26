@@ -1,0 +1,21 @@
+services:
+  faultline:
+    build: .
+    image: faultline/agent:latest
+    container_name: faultline-agent
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - faultline-data:/app/data
+      # Mount your own config; defaults to the built-in synthetic demo.
+      # - ./packages/agent/faultline.config.example.json:/app/agent/faultline.config.json:ro
+    environment:
+      FAULTLINE_LOG_PRETTY: "false"
+      FAULTLINE_INTERVAL_SECONDS: "60"
+      # Secrets come from the environment, never from a committed config file.
+      FAULTLINE_WEBHOOK_URL: "${FAULTLINE_WEBHOOK_URL:-}"
+    command: ["start", "--config", "faultline.demo.json"]
+
+volumes:
+  faultline-data:

@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { runDetection, compareDetectors } from '../lib/detectionEngine'
-import { parseTelemetryCsv, EXAMPLE_CSV } from '../lib/parseTelemetry'
+import { runDetection, compareDetectors } from '@faultline/core'
+import { parseTelemetryCsv, EXAMPLE_CSV } from '@faultline/core'
 import DriftChart from './DriftChart'
 import RiskTimelineChart from './RiskTimelineChart'
 

@@ -8,17 +8,37 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend/dashboard
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: frontend/dashboard/package-lock.json
       - run: npm ci
-      - run: npm test
-      - run: npm run verify:engine
-      - run: npm run build
+      - name: Unit tests (engine + agent)
+        run: npm test
+      - name: Reference scenario verification
+        run: npm run verify:engine
+      - name: Agent smoke test
+        run: node packages/agent/bin/faultline.js once --config packages/agent/faultline.demo.json
+      - name: Dashboard build
+        run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build agent image
+        run: docker build -t faultline/agent:ci .
+      - name: Container starts and serves /health
+        run: |
+          docker run -d --name faultline-ci -p 8787:8787 faultline/agent:ci start --config faultline.demo.json
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8787/health > /dev/null; then
+              curl -s http://127.0.0.1:8787/health
+              docker rm -f faultline-ci
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "agent did not become healthy"; docker logs faultline-ci; exit 1

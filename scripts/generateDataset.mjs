@@ -1,8 +1,8 @@
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { runDetection } from '../frontend/dashboard/src/lib/detectionEngine.js'
-import { RAW_TELEMETRY } from '../frontend/dashboard/src/data/rawTelemetry.js'
+import { runDetection } from '../packages/core/index.js'
+import { RAW_TELEMETRY } from '../packages/core/index.js'
 
 const FALLBACK_HYPOTHESIS = {
   root_service: 'service-b',

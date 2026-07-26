@@ -1,0 +1,46 @@
+{
+  "agent": { "name": "faultline-prod" },
+
+  "source": {
+    "type": "prometheus",
+    "options": {
+      "url": "http://prometheus:9090",
+      "serviceLabel": "service",
+      "queries": {
+        "p99_latency": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[1m])) by (le, service)) * 1000",
+        "retry_rate": "sum(rate(http_client_retries_total[1m])) by (service) / clamp_min(sum(rate(http_requests_total[1m])) by (service), 1) * 100",
+        "error_rate": "sum(rate(http_requests_total{status=~\"5..\"}[1m])) by (service) / clamp_min(sum(rate(http_requests_total[1m])) by (service), 1) * 100"
+      }
+    }
+  },
+
+  "detector": {
+    "intervalSeconds": 60,
+    "historyWindows": 60,
+    "baselineWindows": 15,
+    "zThreshold": 2.0,
+    "minSustain": 2,
+    "triggerThreshold": 3.0,
+    "criticalityWeight": 1.0,
+    "sigmaFloorRatio": 0.1,
+    "sigmaFloorAbs": {
+      "p99_latency": 5,
+      "retry_rate": 0.1,
+      "error_rate": 0.1
+    }
+  },
+
+  "alerting": {
+    "cooldownSeconds": 600,
+    "resolveAfterWindows": 3,
+    "notifiers": [
+      { "type": "stdout" },
+      { "type": "webhook", "urlEnv": "FAULTLINE_WEBHOOK_URL" },
+      { "type": "file", "path": "./data/alerts.jsonl" }
+    ]
+  },
+
+  "server": { "enabled": true, "host": "0.0.0.0", "port": 8787 },
+  "storage": { "path": "./data/faultline-state.json", "maxIncidents": 500 },
+  "logging": { "level": "info", "pretty": false }
+}

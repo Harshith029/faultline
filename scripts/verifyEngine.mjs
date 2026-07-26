@@ -1,5 +1,5 @@
-import { runDetection, compareDetectors, runCounterfactual } from '../frontend/dashboard/src/lib/detectionEngine.js'
-import { RAW_TELEMETRY } from '../frontend/dashboard/src/data/rawTelemetry.js'
+import { runDetection, compareDetectors, runCounterfactual } from '../packages/core/index.js'
+import { RAW_TELEMETRY } from '../packages/core/index.js'
 
 const result = runDetection(RAW_TELEMETRY)
 const cmp = compareDetectors(result)

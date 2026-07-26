@@ -1,0 +1,24 @@
+{
+  "name": "faultline",
+  "version": "1.0.0",
+  "description": "Reliability intelligence for distributed systems: deterministic cascade-failure detection with an AI explanation layer",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "workspaces": [
+    "packages/core",
+    "packages/agent",
+    "frontend/dashboard"
+  ],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "verify:engine": "node scripts/verifyEngine.mjs",
+    "agent": "node packages/agent/bin/faultline.js start",
+    "agent:demo": "node packages/agent/bin/faultline.js start --config packages/agent/faultline.demo.json",
+    "dashboard": "npm run dev --workspace faultline-dashboard",
+    "build": "npm run build --workspace faultline-dashboard"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

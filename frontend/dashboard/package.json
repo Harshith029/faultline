@@ -5,11 +5,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "test": "node --test test/detectionEngine.test.mjs test/parseTelemetry.test.mjs",
-    "verify:engine": "node ../../scripts/verifyEngine.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
+    "@faultline/core": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.15.4"

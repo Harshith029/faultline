@@ -1,0 +1,30 @@
+{
+  "agent": { "name": "faultline-demo" },
+  "source": {
+    "type": "synthetic",
+    "options": {
+      "seed": 7,
+      "incident": { "service": "checkout-api", "startAfterWindows": 12 },
+      "rampWindows": 8,
+      "holdWindows": 8,
+      "recoverWindows": 6
+    }
+  },
+  "detector": {
+    "intervalSeconds": 1,
+    "historyWindows": 60,
+    "baselineWindows": 8,
+    "zThreshold": 2.0,
+    "minSustain": 2,
+    "triggerThreshold": 3.0,
+    "sigmaFloorRatio": 0.1
+  },
+  "alerting": {
+    "cooldownSeconds": 20,
+    "resolveAfterWindows": 3,
+    "notifiers": [{ "type": "stdout" }]
+  },
+  "server": { "enabled": true, "host": "127.0.0.1", "port": 8787 },
+  "storage": { "path": "./data/faultline-demo-state.json", "maxIncidents": 50 },
+  "logging": { "level": "info", "pretty": true }
+}

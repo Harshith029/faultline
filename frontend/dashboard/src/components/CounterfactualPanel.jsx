@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer,
 } from 'recharts'
-import { runCounterfactual, MITIGATIONS } from '../lib/detectionEngine'
+import { runCounterfactual, MITIGATIONS } from '@faultline/core'
 
 const ACT_WINDOWS = [5, 6, 7, 8, 9]
 

@@ -12,8 +12,8 @@ import {
   applyMitigation,
   runCounterfactual,
   MITIGATIONS,
-} from '../src/lib/detectionEngine.js'
-import { RAW_TELEMETRY } from '../src/data/rawTelemetry.js'
+} from '../detectionEngine.js'
+import { RAW_TELEMETRY } from '../fixtures/rawTelemetry.js'
 
 test('computeBaseline derives mean and sigma from the baseline window', () => {
   const b = computeBaseline([10, 12, 8, 10, 100, 200], { ...DEFAULT_PARAMS, baselineWindows: 4 })

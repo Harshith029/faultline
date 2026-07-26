@@ -1,167 +1,226 @@
 # FAULTLINE
 
-### Reliability intelligence for distributed systems — detect cascade failures while there is still time to act
+### Catch cascade failures while there is still time to act
 
 [![CI](https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshith029/faultline/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Zero dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)](packages/agent/package.json)
 
-Static thresholds fire when you are already failing. FAULTLINE reads the *early* behavioral signature of a cascade — sustained drift converging across latency, retries, and errors — and fires windows before a traditional SLO alert would. Detection is deterministic, auditable math; AI explains what the math found. Nothing the AI says can trigger or suppress a detection.
+Static thresholds fire when you are already failing. FAULTLINE watches how latency, retries, and errors **drift together over time** and opens an incident while the failure is still forming — typically several windows before an SLO alert would trip.
 
-If FAULTLINE is useful to you, a ⭐ helps others find it.
+It is a real monitoring agent, not a dashboard: it runs continuously, pulls metrics from Prometheus / CloudWatch / any HTTP endpoint, scores cascade risk with auditable math, manages incident lifecycle with dedup and cooldown, and alerts your webhook.
+
+**Zero runtime dependencies. Runs anywhere Node runs.**
 
 ---
 
-## Quickstart — 60 seconds, no AWS account needed
+## See it detect a real cascade in 30 seconds
 
 ```bash
 git clone https://github.com/Harshith029/faultline.git
-cd faultline/frontend/dashboard
-npm install
-npm run dev
+cd faultline && npm install
+npm run agent:demo
 ```
 
-Open http://localhost:5173 — you get the full product: a 12-window cascade incident to scrub through, the detection engine running live in your browser, a counterfactual "what if you acted earlier?" simulator, and a panel to run the engine on **your own telemetry CSV**. Everything works offline; no keys, no config, no telemetry leaves your machine.
+The agent starts, streams synthetic telemetry for three services, and ~15 seconds in a cascade begins on `checkout-api`. You will see it caught live:
 
-Verify the engine yourself:
+```
+INFO  agent.started source=synthetic intervalSeconds=1 triggerThreshold=3
+WARN  incident.opened incident=inc_checkout-api_ms1m52 service=checkout-api R=3.71 signals=2
+WARN  [FAULTLINE] WARNING checkout-api — cascade detected. R=3.71 (threshold crossed)
+      with 2 converging signal(s): p99_latency z=3.6, retry_rate z=3.9
+INFO  incident.resolved incident=inc_checkout-api_ms1m52 windowsFiring=14 peakR=8.24
+```
+
+While it runs, the agent is serving a real API:
 
 ```bash
-npm test               # 28 unit tests (node:test, zero extra deps)
-npm run verify:engine  # end-to-end scenario assertion
+curl localhost:8787/health          # liveness, tick count, source, error streak
+curl localhost:8787/api/state       # current risk score per service
+curl localhost:8787/api/incidents   # incident history
+curl localhost:8787/metrics         # Prometheus exposition format
+curl -X POST localhost:8787/api/inject?service=payments   # inject a fault on demand
+```
+
+Or with Docker:
+
+```bash
+docker compose up
 ```
 
 ---
 
-## Use cases
+## Point it at your own metrics
 
-**SRE / platform teams** — Export an hour of metrics from any incident as CSV (p99 latency, retry rate, error rate per minute), paste it into the *Bring your own telemetry* panel, and see when convergence detection would have fired versus your static alerts. Zero integration cost to evaluate the approach.
+Everything is driven by one config file. Copy [`packages/agent/faultline.config.example.json`](packages/agent/faultline.config.example.json) and edit the `source` block.
 
-**Incident reviews & postmortems** — Replay telemetry window by window and answer "when could we have known?" quantitatively. The counterfactual simulator applies a mitigation (circuit breaker, pool scale-out, load shedding) at any window and re-runs the same detector on the recovered series — turning lead time from a claim into a number.
+**Prometheus / Thanos / Mimir / VictoriaMetrics**
 
-**Embedding the engine** — [`detectionEngine.js`](frontend/dashboard/src/lib/detectionEngine.js) is a dependency-free ES module. Lift it into your own pipeline:
-
-```js
-import { runDetection, compareDetectors } from './detectionEngine.js'
-
-const result = runDetection(yourWindows) // [{ window_number, p99_latency, retry_rate, error_rate }, ...]
-console.log(result.detectionWindow)      // first window where cascade risk R >= 3.0
-console.log(compareDetectors(result))    // lead time vs static SLO and single-metric detectors
+```json
+{
+  "source": {
+    "type": "prometheus",
+    "options": {
+      "url": "http://prometheus:9090",
+      "serviceLabel": "service",
+      "queries": {
+        "p99_latency": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[1m])) by (le, service)) * 1000",
+        "retry_rate":  "sum(rate(http_client_retries_total[1m])) by (service) / clamp_min(sum(rate(http_requests_total[1m])) by (service), 1) * 100",
+        "error_rate":  "sum(rate(http_requests_total{status=~\"5..\"}[1m])) by (service) / clamp_min(sum(rate(http_requests_total[1m])) by (service), 1) * 100"
+      }
+    }
+  }
+}
 ```
 
-**Enterprises** — Self-host end to end in your own AWS account (optional, below). Telemetry stays in your infrastructure; the AI layer runs on your own Amazon Bedrock access. MIT licensed — audit it, fork it, ship it internally.
+**Any HTTP endpoint you already have** — `mapping` renames incoming fields, so an existing internal metrics route usually needs no new code:
 
-**Teaching & training** — An interactive sandbox for cascade dynamics: signal qualification, convergence scoring, lead time, and blast radius, with every number derivable by hand.
+```json
+{ "source": { "type": "http", "options": {
+  "url": "https://internal.example/metrics.json",
+  "mapping": { "service": "svc", "p99_latency": "latency_ms" }
+}}}
+```
+
+**Amazon CloudWatch** (needs `npm install @aws-sdk/client-cloudwatch`):
+
+```json
+{ "source": { "type": "cloudwatch", "options": {
+  "region": "us-east-1",
+  "namespace": "AWS/ApiGateway",
+  "targets": [{ "service": "checkout-api", "dimensions": { "ApiName": "prod-api" } }]
+}}}
+```
+
+Then run it, with secrets supplied by the environment — never committed:
+
+```bash
+FAULTLINE_WEBHOOK_URL=https://hooks.slack.com/services/... \
+  node packages/agent/bin/faultline.js start --config my-config.json
+```
+
+The webhook payload includes a `text` field, so Slack, Mattermost, and Discord accept it directly; everything else can read the structured `incident` object.
 
 ---
 
 ## How detection works
 
-Three equations, fully auditable — no trained model in the detection path.
+Three equations. No trained model in the detection path — every alert can be re-derived by hand.
 
-**1. Normalize** — every metric is scored against its own healthy baseline:
+**1. Normalize** — score each metric against its own recent baseline:
 
 ```
 z = (value − mean) / standard_deviation
 ```
 
-**2. Qualify** — single-window spikes are noise; only sustained drift counts:
+**2. Qualify** — a single bad window is noise; only sustained drift counts:
 
 ```
 z ≥ 2.0  AND  persists for ≥ 2 consecutive windows
 ```
 
-**3. Score & trigger** — converging signals compound the cascade risk:
+**3. Score & trigger** — converging signals compound risk:
 
 ```
-R = mean_z × ln(1 + signal_count) × W      →  R ≥ 3.0 fires detection
+R = mean_z × ln(1 + signal_count) × W      →  R ≥ 3.0 opens an incident
 ```
 
-On the bundled scenario: latency qualifies at W6, retry amplification at W8 (trigger, R = 3.96), errors at W9, and the error-rate SLO breaches at W11 — meaning FAULTLINE fires **3 windows before a static SLO alert** and 4 before the modeled outage. The dataset is generated from the raw inputs by `scripts/generateDataset.mjs`, so displayed numbers and stored numbers can never diverge.
+Because `ln(1 + n)` grows with the number of *converging* signals, three metrics at 3σ score far higher than one metric at 9σ. That is the whole thesis: **cascades announce themselves through convergence, not through any single number going red.**
 
-When detection fires, Amazon Bedrock (Claude) generates a structured root-cause hypothesis — root service, failure mechanism, cascade path, and evidence — with a strict timeout and a deterministic fallback. AI explains; it never detects.
+On the bundled reference incident, detection fires **3 windows before** a static 2% error-rate SLO alert would — measured, not asserted: run `npm run verify:engine`.
 
----
+### Incident lifecycle
 
-## Run it on your own data
+Detection alone would page you every window. The agent adds the operational half:
 
-The CSV panel (and the engine) accepts any per-window series with these columns (common aliases like `latency_ms`, `p99`, `err_rate` are auto-mapped):
-
-```csv
-window,p99_latency,retry_rate,error_rate
-1,112,0.4,0.63
-2,82,0.67,0.24
-...
-```
-
-At least 5 rows; the first 4 establish the baseline. Detection runs entirely client-side.
-
----
-
-## Optional: self-hosted AWS live mode
-
-The dashboard can also monitor **real infrastructure**: a Lambda pulls the last hour of CloudWatch metrics for an API Gateway (p99 latency, 4XX rate as retry-pressure proxy, 5XX rate) and the browser runs the same engine on it. In our reference deployment, FAULTLINE watches its own production API — cold starts and deploy-time 5XX errors show up in the live view.
-
-To self-host, you provision in your own account:
-
-| Component | Purpose |
+| Behaviour | Why it exists |
 |---|---|
-| Lambda (Node 20) — [`backend/lambda/timelineHandler`](backend/lambda/timelineHandler/handler.js) | serves the timeline, live CloudWatch pulls, Bedrock invocation |
-| API Gateway (REST) | fronts the Lambda (`GET /timeline`) |
-| DynamoDB `Faultline-DriftSignals` | stores the scenario windows (seed with `scripts/seed.js`) |
-| S3 bucket | holds `dataset/faultline_windows.json` for seeding |
-| Amazon Bedrock (Claude 3 Haiku) | root-cause hypothesis at trigger |
-
-IAM for the Lambda role: [`iam-policy.json`](iam-policy.json) plus `cloudwatch:GetMetricData` for live mode.
-
-Environment variables:
-
-| Variable | Where | Purpose |
-|---|---|---|
-| `VITE_API_URL` | frontend build/dev (`.env.local`, see `.env.example`) | your API Gateway base URL; unset = offline mode |
-| `TABLE_NAME`, `BEDROCK_MODEL_ID`, `LIVE_API_NAME` | Lambda | backend wiring |
-| `DATASET_BUCKET` | seed script | S3 source for seeding |
-
-Frontend hosting is anything that serves static files (`npm run build` → `dist/`); `scripts/deploy.ps1` automates Amplify manual deploys if you use Amplify (configure via `FAULTLINE_APP_ID` / `VITE_API_URL` env vars).
-
-Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+| One incident per cascade, not one alert per window | Alert fatigue is how monitoring gets ignored |
+| Resolves only after N consecutive clean windows | One good sample mid-incident means nothing |
+| Cooldown after resolution | Stops a flapping service from paging all night |
+| Notifier failures are isolated | A dead webhook must not stop detection |
+| Source failures degrade `/health`, don't crash | Monitoring that dies during an outage is worthless |
 
 ---
 
-## Project structure
+## Use it as a library
+
+The engine is a dependency-free ES module ([`@faultline/core`](packages/core/detectionEngine.js)):
+
+```js
+import { runDetection, compareDetectors } from '@faultline/core'
+
+const result = runDetection(windows)  // [{ window_number, p99_latency, retry_rate, error_rate }, ...]
+result.detectionWindow                // first window where R crossed the threshold
+compareDetectors(result)              // lead time vs static-SLO and single-metric detectors
+```
+
+---
+
+## The dashboard (optional)
+
+```bash
+npm run dashboard   # http://localhost:5173
+```
+
+An incident-analysis UI over the same engine: scrub a cascade window by window, watch each z-score get derived from raw values, compare lead time against baseline detectors, run counterfactual mitigations ("what if we had acted at W6?"), and drop in your own CSV. Useful for postmortems and for understanding the math — the agent is what runs in production.
+
+---
+
+## Configuration reference
+
+| Key | Default | Notes |
+|---|---|---|
+| `source.type` | `synthetic` | `synthetic` · `prometheus` · `http` · `cloudwatch` |
+| `detector.intervalSeconds` | `60` | Collection cadence |
+| `detector.historyWindows` | `40` | Rolling buffer size per service |
+| `detector.baselineWindows` | `10` | Oldest N windows form the baseline |
+| `detector.zThreshold` | `2.0` | Sigma required to count as elevated |
+| `detector.minSustain` | `2` | Consecutive windows required to qualify |
+| `detector.triggerThreshold` | `3.0` | R at which an incident opens |
+| `detector.sigmaFloorAbs` | `null` | Per-metric minimum sigma; stops quiet baselines inflating z |
+| `alerting.cooldownSeconds` | `300` | Suppress re-opening after resolution |
+| `alerting.resolveAfterWindows` | `3` | Clean windows required to resolve |
+| `server.port` | `8787` | HTTP API |
+
+Env overrides: `FAULTLINE_WEBHOOK_URL`, `FAULTLINE_PORT`, `FAULTLINE_HOST`, `FAULTLINE_LOG_LEVEL`, `FAULTLINE_INTERVAL_SECONDS`, `FAULTLINE_STORAGE_PATH`, `FAULTLINE_SOURCE_TYPE`.
+
+Full operational detail: [docs/AGENT.md](docs/AGENT.md) · architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+---
+
+## Project layout
 
 ```
-frontend/dashboard/     React + Vite dashboard (works standalone, offline)
-  src/lib/              detection engine + CSV parser (dependency-free ES modules)
-  src/data/             raw telemetry for the bundled scenario
-  test/                 unit tests (node:test)
-backend/lambda/         timeline + live-telemetry + Bedrock Lambda
-dataset/                generated scenario dataset (do not hand-edit)
-scripts/                dataset generator, seeders, verifier, deploy script
-docs/                   architecture documentation
+packages/core/      detection engine + CSV parser (zero deps, shared)
+packages/agent/     the monitoring agent: sources, detector, alerting, API
+frontend/dashboard/ incident-analysis UI (optional)
+backend/lambda/     AWS Lambda variant for serverless deployments
+docs/               architecture and operations
 ```
 
-## Testing & CI
+## Testing
 
-- `npm test` — 28 unit tests covering baseline math, qualification, risk scoring, counterfactuals, and CSV parsing
-- `npm run verify:engine` — asserts the engine reproduces the reference cascade and beats baseline detectors
-- GitHub Actions runs tests, verification, and the production build on every push and PR
+```bash
+npm test              # 84 unit + integration tests
+npm run verify:engine # reference cascade assertion
+```
+
+Covers the engine math, config validation, incident state machine, every telemetry source, the HTTP API, and end-to-end runs asserting that a cascade produces exactly one alert, reaches the webhook, persists, and resolves.
 
 ## Roadmap
 
-- Continuous monitoring: scheduled detection with SNS/Slack alerting (today live mode pulls on demand)
-- Adapters for Prometheus / OpenTelemetry metric sources
-- Backtesting harness for public incident datasets (SMD, AIOps KPI) with precision/recall + lead-time reporting
-- Live Bedrock-powered incident Q&A grounded in the active window
+- Adaptive per-service thresholds learned from history
+- OpenTelemetry-native source and trace-derived dependency graphs
+- Backtesting harness against public incident datasets (SMD, AIOps KPI) with precision/recall and lead-time reporting
+- Optional LLM explanation layer in the agent (already present in the AWS Lambda variant)
 
 ## Contributing
 
-Issues and PRs are welcome. Keep the one invariant: **detection stays deterministic and auditable — AI only explains.** Run `npm test` and `npm run verify:engine` before submitting.
+Issues and PRs welcome. One invariant: **detection stays deterministic and auditable — AI may explain, never decide.** Run `npm test` before submitting.
 
 ## License
 
 [MIT](LICENSE) — use it, fork it, ship it.
 
-## Credits
-
-Built by **Team Progsolve**. FAULTLINE was a **Top 1000 Semi-Finalist** in the AWS Builder Center AIdeas Challenge — [read the project article](https://builder.aws.com/content/3AuBMFpv22Kue07Q8ZxD0n1GJGD/aideas-faultline-ai-assisted-predictive-reliability-intelligence-for-distributed-systems).
-
-Contact: [harshith.pali3286@gmail.com](mailto:harshith.pali3286@gmail.com)
+Built by **Team Progsolve**. Recognized as a Top 1000 Semi-Finalist in the AWS Builder Center AIdeas Challenge.
