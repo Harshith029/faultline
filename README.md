@@ -144,6 +144,27 @@ Detection alone would page you every window. The agent adds the operational half
 
 ---
 
+## Does it actually work?
+
+Claims about detectors are cheap, so the repo ships the measurement. `npm run benchmark` runs every detector against 12 labeled scenarios × 20 seeds — five real cascades that **must** be caught, and seven adversarial non-incidents (single-window spikes, transient blips, deploy step-changes, 3× noise, seasonal load, organic growth) that **must not** page anyone.
+
+| Detector | Precision | Recall | F1 |
+|---|---:|---:|---:|
+| **FAULTLINE (strict)** | **83.3%** | **100%** | **90.9%** |
+| FAULTLINE (default) | 69.4% | 100% | 82.0% |
+| Sustained 3σ | 59.2% | 100% | 74.3% |
+| Single metric 3σ | 35.5% | 66.0% | 46.2% |
+| Static SLO (3×) | 33.3% | 3.0% | 5.5% |
+
+Both FAULTLINE profiles catch **every** cascade in the suite. The static SLO baseline catches 3% — it is a lagging outcome metric, which is exactly the problem this project exists to address. Median lead over that baseline: **7 windows**.
+
+The honest caveats, straight from the same run:
+
+- **A blip that lasts exactly `minSustain` windows still fires** on the default profile (`transient-multi-spike`, 100%). The strict profile (`minSustain: 3`) drops that to 0% and is what you should run in noisy environments — it costs about one window of delay.
+- **A permanent step change still alerts** (`deploy-step-change`, 100%). With a fixed baseline this is mathematically indistinguishable from a real cascade. The agent's rolling baseline absorbs it over time, but you will get an alert first. Arguably correct — a deploy that permanently moves all three metrics is worth knowing about — but it is a false positive against the label, so it is reported as one.
+- **Sustained 3σ fires ~2 windows earlier** than FAULTLINE and catches everything too. It is simply far noisier (59.2% vs 83.3% precision). Speed is not free.
+- These are **synthetic scenarios with known ground truth**, not production incidents. They measure whether the detector behaves as designed against realistic shapes; they are not evidence of field performance. Validation against public incident datasets is the top roadmap item.
+
 ## Use it as a library
 
 The engine is a dependency-free ES module ([`@faultline/core`](packages/core/detectionEngine.js)):
@@ -203,8 +224,9 @@ docs/               architecture and operations
 ## Testing
 
 ```bash
-npm test              # 84 unit + integration tests
+npm test              # 98 unit + integration tests
 npm run verify:engine # reference cascade assertion
+npm run benchmark     # precision/recall/lead time vs baseline detectors
 ```
 
 Covers the engine math, config validation, incident state machine, every telemetry source, the HTTP API, and end-to-end runs asserting that a cascade produces exactly one alert, reaches the webhook, persists, and resolves.

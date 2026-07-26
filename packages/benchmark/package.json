@@ -1,0 +1,18 @@
+{
+  "name": "@faultline/benchmark",
+  "version": "1.0.0",
+  "description": "Labeled benchmark measuring detection quality: precision, recall, and lead time against baseline detectors",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "bin": {
+    "faultline-benchmark": "./bin/benchmark.js"
+  },
+  "scripts": {
+    "start": "node bin/benchmark.js",
+    "test": "node --test test/benchmark.test.mjs"
+  },
+  "dependencies": {
+    "@faultline/core": "*"
+  }
+}

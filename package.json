@@ -8,11 +8,13 @@
   "workspaces": [
     "packages/core",
     "packages/agent",
+    "packages/benchmark",
     "frontend/dashboard"
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "verify:engine": "node scripts/verifyEngine.mjs",
+    "benchmark": "node packages/benchmark/bin/benchmark.js",
     "agent": "node packages/agent/bin/faultline.js start",
     "agent:demo": "node packages/agent/bin/faultline.js start --config packages/agent/faultline.demo.json",
     "dashboard": "npm run dev --workspace faultline-dashboard",

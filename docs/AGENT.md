@@ -48,9 +48,18 @@ burns — memory leaks, disk fill — raise `historyWindows` substantially.
 
 Start with the defaults and one week of observation, then adjust:
 
-**Too many alerts** — raise `triggerThreshold` (3.0 → 4.0), raise `minSustain`
-(2 → 3), or raise `zThreshold`. Prefer `minSustain`: it suppresses noise without
-making the detector less sensitive to real, sustained drift.
+**Too many alerts** — raise `minSustain` from 2 to 3 first. On the benchmark
+suite (`npm run benchmark`) that single change moves precision from 69.4% to
+83.3% while recall stays at 100%, at a cost of roughly one window of extra
+delay. It is the highest-value knob by a wide margin, because a blip lasting
+exactly `minSustain` windows is otherwise indistinguishable from the start of a
+real cascade. Raising `triggerThreshold` or `zThreshold` also works but blunts
+sensitivity to genuine slow burns.
+
+**A single metric shouldn't be able to page anyone** — that is enforced by
+`minSignals` (default 2): an incident requires at least two qualified signals
+regardless of how extreme one of them is. Set it to 1 only if you want
+single-signal alerting, which measurably increases false positives.
 
 **Alerts arrive too late** — lower `triggerThreshold` toward 2.5, or shorten
 `intervalSeconds` for faster-moving services.

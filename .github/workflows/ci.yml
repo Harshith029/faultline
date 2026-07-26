@@ -19,6 +19,8 @@ jobs:
         run: npm test
       - name: Reference scenario verification
         run: npm run verify:engine
+      - name: Detection benchmark
+        run: npm run benchmark -- --seeds=10
       - name: Agent smoke test
         run: node packages/agent/bin/faultline.js once --config packages/agent/faultline.demo.json
       - name: Dashboard build

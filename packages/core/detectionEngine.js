@@ -6,6 +6,7 @@ export const DEFAULT_PARAMS = {
   criticalityWeight: 1.0,
   triggerThreshold: 3.0,
   outageThreshold: 9.0,
+  minSignals: 2,
 }
 
 const METRIC_KEYS = ['p99_latency', 'retry_rate', 'error_rate']
@@ -82,8 +83,9 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
     }
 
     const R = riskScore(qualified_signals.map((s) => s.z_score), params)
-    const triggered = R >= params.triggerThreshold
-    const outage = R >= params.outageThreshold
+    const converged = qualified_signals.length >= (params.minSignals ?? 1)
+    const triggered = converged && R >= params.triggerThreshold
+    const outage = triggered && R >= params.outageThreshold
 
     return {
       service_id: w.service_id ?? 'B',
