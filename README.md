@@ -18,7 +18,8 @@ It is a real monitoring agent, not a dashboard: it runs continuously, pulls metr
 
 ```bash
 git clone https://github.com/Harshith029/faultline.git
-cd faultline && npm install
+cd faultline
+npm install
 npm run agent:demo
 ```
 
