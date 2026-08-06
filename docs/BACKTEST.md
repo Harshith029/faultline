@@ -130,13 +130,50 @@ Honestly stated:
   suite implied: 2× the precision of a single-metric threshold at comparable
   recall.
 
+## Tried and rejected: change-point detection
+
+The roadmap's top item was change-point detection, on the theory that most false
+positives are level shifts. It was implemented, measured, and **reverted**.
+
+The implementation rebaselined a metric that had stayed elevated for N windows
+and then gone flat (near-zero slope, variance back in family). Measured against
+the unchanged detector on the same four machines:
+
+| Detector | Precision | Recall | F1 | False alerts |
+|---|---:|---:|---:|---:|
+| FAULTLINE | 14.1% | 80.5% | 23.9% | 544 |
+| FAULTLINE + change-point | 10.5% | 70.7% | 18.3% | 751 |
+
+Worse on every axis. Two reasons, both instructive:
+
+1. **It fragments episodes.** Rebaselining mid-incident makes the detector
+   forget the elevated level; the metric then re-qualifies against the *new*
+   baseline as it moves again. One long firing episode becomes several short
+   ones, and every extra episode is another alert.
+2. **It cannot fire early enough to matter.** Detection triggers at
+   `minSustain` (2 windows). Confirming that a shift has *flattened* takes ~8
+   windows. The alert has already gone out by the time the change point is
+   recognized — on the synthetic suite, `deploy-step-change` still fired on
+   100% of runs with the feature enabled.
+
+The second point is the deeper one, and it is not an implementation defect:
+
+> **In the first few windows, a step change and the onset of a cascade are
+> genuinely indistinguishable.** Both are "several metrics moved up and stayed
+> up". The only way to tell them apart is to wait and see whether the series
+> flattens or keeps climbing — and waiting is exactly the lead time this project
+> exists to preserve.
+
+Any future attempt has to accept that trade explicitly: either delay alerting to
+gain precision, or alert early and accept that some level shifts will page. It
+cannot have both. The code was removed rather than shipped disabled-by-default,
+because a feature that does not work is a maintenance cost, not an option.
+
 ## What would actually move the number
 
-In rough order of expected value:
+In rough order of expected value, with the top item now struck:
 
-1. **Change-point detection instead of a fixed baseline.** Most false positives
-   are level shifts. A detector that recognizes "this is a new normal" rather
-   than "this is sustained drift" would eliminate a whole class.
+1. ~~Change-point detection~~ — tried, measured, made things worse. See above.
 2. **Per-channel learned thresholds.** One global `zThreshold` across 38
    heterogeneous channels is crude.
 3. **Seasonality awareness.** Daily and weekly cycles are currently
@@ -145,5 +182,10 @@ In rough order of expected value:
    qualified". Weighting by whether those channels are *historically* correlated
    would separate genuine cascades from unrelated coincident movement.
 
-None of these are implemented. They are the honest roadmap, and the backtest
-harness now exists to tell whether any of them help.
+Items 2–4 are not implemented. They are the honest roadmap, and the backtest
+harness exists to tell whether any of them help — as it already did for item 1,
+by rejecting it.
+
+That is the point of this document. Every idea here gets measured against real
+labelled data before it ships, and ideas that lose are removed and written up
+rather than quietly left in the codebase.

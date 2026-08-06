@@ -270,7 +270,7 @@ Covers the engine math, config validation, incident state machine, every telemet
 
 ## Roadmap
 
-Driven by what the [backtest](docs/BACKTEST.md) actually showed, in order of expected value:
+Driven by what the [backtest](docs/BACKTEST.md) actually showed, in order of expected value. Its former top item — change-point detection — was implemented, measured, found to make precision *and* recall worse, and reverted; the write-up explains why level shifts and cascade onsets are indistinguishable early enough to matter.
 
 - **Change-point detection** — most false positives are level shifts, not drift. Recognizing "this is a new normal" would remove a whole class of them.
 - **Per-channel learned thresholds** — one global `zThreshold` across heterogeneous channels is crude.
