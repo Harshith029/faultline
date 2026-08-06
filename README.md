@@ -160,7 +160,27 @@ Detection alone would page you every window. The agent adds the operational half
 
 ## Does it actually work?
 
-Claims about detectors are cheap, so the repo ships the measurement. `npm run benchmark` runs every detector against 12 labeled scenarios × 20 seeds — five real cascades that **must** be caught, and seven adversarial non-incidents (single-window spikes, transient blips, deploy step-changes, 3× noise, seasonal load, organic growth) that **must not** page anyone.
+Two answers, and the honest one is second.
+
+### On real production telemetry
+
+`npm run backtest` replays the [Server Machine Dataset](https://github.com/NetManAIOps/OmniAnomaly) — 28 days of real server telemetry, 38 channels per machine, incidents labelled by the operators who ran the systems. Detection is replayed causally (no detector sees the future) across 41 labelled incidents on 4 machines, using **all 38 channels with no hand-picking**.
+
+| Detector | Precision | Recall | F1 | False alerts |
+|---|---:|---:|---:|---:|
+| **FAULTLINE** | **14.1%** | 80.5% | **23.9%** | 544 |
+| Sustained 3σ | 11.3% | 85.4% | 20.0% | 430 |
+| Single metric 3σ | 7.3% | 97.6% | 13.5% | 1019 |
+
+FAULTLINE wins on F1 and roughly doubles the precision of a single-metric threshold while nearly halving its false alerts — **and 14% precision is still too noisy to page a human unattended.** Both facts are true and neither is hidden.
+
+A parameter sweep confirms this is not a tuning problem: precision never exceeds 16.5% at any threshold, and demanding more converging signals *lowers* it while destroying recall. Most false positives are real, sustained, multi-channel excursions that operators simply did not call incidents — deploys, batch jobs, capacity shifts. **Use it today as a triage and ranking signal, not as an unattended pager.** Full analysis, per-machine breakdown and the roadmap that would move the number: [docs/BACKTEST.md](docs/BACKTEST.md).
+
+### On synthetic scenarios
+
+`npm run benchmark` runs every detector against 12 labeled scenarios × 20 seeds — five cascades that **must** be caught, and seven adversarial non-incidents (single-window spikes, transient blips, deploy step-changes, 3× noise, seasonal load, organic growth) that **must not** page anyone.
+
+⚠️ **These scenarios were designed from the same mental model as the detector, so they largely measure whether the implementation matches its own assumptions.** They are a regression test, not evidence of field performance — the real-world numbers above are ~6× worse. Read them as "does the math still behave as specified", nothing more.
 
 | Detector | Precision | Recall | F1 |
 |---|---:|---:|---:|
@@ -177,7 +197,6 @@ The honest caveats, straight from the same run:
 - **A blip that lasts exactly `minSustain` windows still fires** on the default profile (`transient-multi-spike`, 100%). The strict profile (`minSustain: 3`) drops that to 0% and is what you should run in noisy environments — it costs about one window of delay.
 - **A permanent step change still alerts** (`deploy-step-change`, 100%). With a fixed baseline this is mathematically indistinguishable from a real cascade. The agent's rolling baseline absorbs it over time, but you will get an alert first. Arguably correct — a deploy that permanently moves all three metrics is worth knowing about — but it is a false positive against the label, so it is reported as one.
 - **Sustained 3σ fires ~2 windows earlier** than FAULTLINE and catches everything too. It is simply far noisier (59.2% vs 83.3% precision). Speed is not free.
-- These are **synthetic scenarios with known ground truth**, not production incidents. They measure whether the detector behaves as designed against realistic shapes; they are not evidence of field performance. Validation against public incident datasets is the top roadmap item.
 
 ## Use it as a library
 
@@ -240,18 +259,24 @@ docs/               architecture and operations
 ## Testing
 
 ```bash
-npm test              # 104 unit + integration tests
+npm test              # 115 unit + integration tests
 npm run verify:engine # reference cascade assertion
-npm run benchmark     # precision/recall/lead time vs baseline detectors
+npm run benchmark     # synthetic precision/recall/lead time vs baselines
+npm run fetch:dataset # download the Server Machine Dataset (not vendored)
+npm run backtest      # replay real production telemetry
 ```
 
 Covers the engine math, config validation, incident state machine, every telemetry source, the HTTP API, and end-to-end runs asserting that a cascade produces exactly one alert, reaches the webhook, persists, and resolves.
 
 ## Roadmap
 
-- Adaptive per-service thresholds learned from history
+Driven by what the [backtest](docs/BACKTEST.md) actually showed, in order of expected value:
+
+- **Change-point detection** — most false positives are level shifts, not drift. Recognizing "this is a new normal" would remove a whole class of them.
+- **Per-channel learned thresholds** — one global `zThreshold` across heterogeneous channels is crude.
+- **Seasonality awareness** — daily and weekly cycles currently look like drift.
+- **Correlation-weighted convergence** — weight signals by whether those channels are *historically* coupled, separating genuine cascades from coincident movement.
 - OpenTelemetry-native source and trace-derived dependency graphs
-- Backtesting harness against public incident datasets (SMD, AIOps KPI) with precision/recall and lead-time reporting
 - Optional LLM explanation layer in the agent (already present in the AWS Lambda variant)
 
 ## Contributing
