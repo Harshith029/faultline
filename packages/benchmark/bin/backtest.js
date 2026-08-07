@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-import { availableMachines, loadMachine } from '../src/datasets/smd.js'
-import { backtestMachine } from '../src/backtest.js'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { availableMachines, loadMachine, loadTrainMachine, SMD_DIR } from '../src/datasets/smd.js'
+import { backtestMachine, learnThresholds, smdParams } from '../src/backtest.js'
 
 const args = process.argv.slice(2)
 const arg = (name, fallback) => {
@@ -29,11 +31,25 @@ if (machines.length === 0) {
 
 const DETECTOR_LABELS = {
   faultline: 'FAULTLINE',
+  faultline_learned: 'FAULTLINE +learned',
   single_3sigma: 'Single metric 3σ',
   sustained_3sigma: 'Sustained 3σ',
 }
 
 const datasets = machines.map((machine) => loadMachine(machine, { aggregate }))
+
+// Per-channel thresholds are learned from each machine's own anomaly-free
+// training split. Test labels are never consulted.
+const thresholdsByMachine = {}
+for (const dataset of datasets) {
+  if (!existsSync(join(SMD_DIR, `train_${dataset.machine}.txt`))) continue
+  const train = loadTrainMachine(dataset.machine, { aggregate })
+  thresholdsByMachine[dataset.machine] = learnThresholds(train.windows, {
+    metrics: dataset.metrics,
+    params: smdParams(dataset.metrics, paramOverrides),
+    historyWindows,
+  })
+}
 
 if (sweep) {
   const grid = []
@@ -74,7 +90,11 @@ if (sweep) {
 }
 
 const runs = datasets.map((dataset) => ({
-  ...backtestMachine(dataset, { historyWindows, paramOverrides }),
+  ...backtestMachine(dataset, {
+    historyWindows,
+    paramOverrides,
+    learnedThresholds: thresholdsByMachine[dataset.machine] ?? null,
+  }),
   metrics: dataset.metrics.length,
 }))
 
@@ -102,6 +122,7 @@ for (const run of runs) {
   process.stdout.write(`  ${'-'.repeat(84)}\n`)
   for (const [key, label] of Object.entries(DETECTOR_LABELS)) {
     const r = run.results[key]
+    if (!r) continue
     process.stdout.write(
       `  ${pad(label, 20)}${pad(pct(r.precision), 11)}${pad(pct(r.recall), 11)}${pad(pct(r.f1), 11)}` +
         `${pad(r.episodes, 9)}${pad(r.falsePositiveEpisodes, 14)}` +
@@ -116,6 +137,7 @@ if (runs.length > 1) {
   process.stdout.write(`  ${pad('detector', 20)}${pad('precision', 11)}${pad('recall', 11)}${pad('F1', 11)}${pad('false alerts', 14)}\n`)
   process.stdout.write(`  ${'-'.repeat(84)}\n`)
   for (const [key, label] of Object.entries(DETECTOR_LABELS)) {
+    if (!runs.every((r) => r.results[key])) continue
     const segments = runs.reduce((a, r) => a + r.results[key].segments, 0)
     const detected = runs.reduce((a, r) => a + r.results[key].detectedSegments, 0)
     const episodes = runs.reduce((a, r) => a + r.results[key].episodes, 0)

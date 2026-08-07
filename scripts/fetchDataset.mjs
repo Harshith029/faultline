@@ -30,7 +30,9 @@ async function main() {
   await mkdir(dir, { recursive: true })
 
   for (const machine of machines) {
-    for (const kind of ['test', 'test_label']) {
+    // `train` is the operators' anomaly-free period. It exists so parameters can
+    // be learned without ever touching the labelled test split.
+    for (const kind of ['train', 'test', 'test_label']) {
       const target = join(dir, `${kind}_${machine}.txt`)
       if (await exists(target)) {
         process.stdout.write(`skip   ${kind}/${machine} (already present)\n`)

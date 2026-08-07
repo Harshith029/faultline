@@ -169,23 +169,98 @@ gain precision, or alert early and accept that some level shifts will page. It
 cannot have both. The code was removed rather than shipped disabled-by-default,
 because a feature that does not work is a maintenance cost, not an option.
 
+## Tried and rejected: per-channel learned thresholds
+
+Roadmap item 2 was per-channel thresholds, on the theory that one global
+`zThreshold` across 38 heterogeneous channels is too crude. Each channel's
+threshold was learned from that machine's own **anomaly-free training split**
+(the 99.5th percentile of its healthy z-scores, floored at the global default so
+learning could only ever raise the bar). Test labels were never consulted.
+
+Aggregate looked like a win:
+
+| Detector | Precision | Recall | F1 | False alerts |
+|---|---:|---:|---:|---:|
+| FAULTLINE | 14.1% | 80.5% | 23.9% | 544 |
+| FAULTLINE + learned thresholds | 20.2% | **51.2%** | 29.0% | **178** |
+
+Two-thirds fewer false alerts and a better F1. Per machine, it falls apart:
+
+| Machine | FAULTLINE F1 | + learned F1 | Recall change |
+|---|---:|---:|---|
+| machine-1-1 | 51.6% | **61.3%** | 75% → 75% |
+| machine-1-2 | 11.7% | **22.7%** | 100% → 90% |
+| machine-2-1 | 23.1% | 17.2% | 69% → 46% |
+| machine-3-2 | 20.7% | **0.0%** | 80% → **0%** |
+
+On machine-3-2 the detector went **completely blind**: zero of ten incidents
+caught, while still emitting 26 false alerts. The aggregate F1 improvement was
+hiding a total failure on one machine in four.
+
+The cause is visible in the learned values themselves:
+
+```
+machine-1-1  median=8.00  at cap (>=8σ): 20/38 channels   at floor (<=2σ): 15/38
+machine-1-2  median=8.00  at cap:        21/38            at floor:         8/38
+machine-2-1  median=7.00  at cap:        17/38            at floor:        10/38
+machine-3-2  median=8.00  at cap:        19/38            at floor:        10/38
+```
+
+Roughly half of every machine's channels saturate the cap. The distribution is
+bimodal — floor or cap, little in between — so this is not per-channel
+calibration at all; it is a binary "this channel is usable / this channel is
+switched off" classifier. On machine-3-2 the channels that actually move during
+its incidents landed in the switched-off half.
+
+**The real finding is one level down.** Healthy channels should not be producing
+99.5th-percentile z-scores of 8 sigma. That they do means the underlying
+statistic is wrong for this data:
+
+> z-scores assume roughly Gaussian behaviour. Real server telemetry is spiky,
+> bursty and often near-constant with occasional jumps. Mean and standard
+> deviation are both badly non-robust to exactly that shape, so a handful of
+> normal spikes inflate sigma and distort every subsequent score.
+
+Tuning thresholds on top of a fragile statistic cannot fix a fragile statistic.
+The honest successor is to replace it: **median and MAD (median absolute
+deviation)** instead of mean and sigma, which are robust to precisely this kind
+of contamination. That is now the top roadmap item, and it is a different and
+better bet than anything tried so far.
+
+What was kept: the engine gained `zThresholdPerMetric`, which works exactly as
+specified and lets an operator who *knows* a channel is bursty raise its bar by
+hand. What was rejected is deriving those numbers automatically by this method.
+The learner and the `faultline_learned` detector remain in the benchmark package
+so these numbers stay reproducible — the benchmark is a research log, and a
+negative result nobody can re-run is not evidence.
+
 ## What would actually move the number
 
-In rough order of expected value, with the top item now struck:
+In rough order of expected value, with tried-and-rejected items struck:
 
-1. ~~Change-point detection~~ — tried, measured, made things worse. See above.
-2. **Per-channel learned thresholds.** One global `zThreshold` across 38
-   heterogeneous channels is crude.
-3. **Seasonality awareness.** Daily and weekly cycles are currently
+1. ~~Change-point detection~~ — tried, measured, made things worse.
+2. ~~Per-channel learned thresholds~~ — tried, better on average, catastrophic
+   on one machine in four. Rejected, and it exposed the item below.
+3. **Robust statistics: median/MAD instead of mean/sigma.** The diagnosis above
+   says the base statistic, not the threshold, is what breaks on real telemetry.
+   Now the highest-value untried change.
+4. **Seasonality awareness.** Daily and weekly cycles are currently
    indistinguishable from drift.
-4. **Correlation structure.** Convergence currently means "≥ N signals
+5. **Correlation structure.** Convergence currently means "≥ N signals
    qualified". Weighting by whether those channels are *historically* correlated
    would separate genuine cascades from unrelated coincident movement.
 
-Items 2–4 are not implemented. They are the honest roadmap, and the backtest
-harness exists to tell whether any of them help — as it already did for item 1,
-by rejecting it.
+Items 3–5 are not implemented. They are the honest roadmap, and the backtest
+harness exists to tell whether any of them help — as it already did for items 1
+and 2, by rejecting both.
 
-That is the point of this document. Every idea here gets measured against real
-labelled data before it ships, and ideas that lose are removed and written up
-rather than quietly left in the codebase.
+That is the point of this document. Every idea gets measured against real
+labelled data before it ships. Two of the first three ideas lost, and saying so
+is more useful than a roadmap of untested optimism.
+
+**A note on reading aggregate metrics.** Item 2 improved aggregate F1 by 21% and
+cut false alerts by two thirds, and was still the wrong thing to ship, because
+one machine in four went blind. When a monitoring system fails, it fails on
+*your* system, not on the average system — so per-subject worst case matters
+more than the mean. Every result in this document is therefore reported per
+machine as well as aggregated.

@@ -70,6 +70,35 @@ export function loadMachine(machine, { dir = SMD_DIR, aggregate = 5 } = {}) {
   return { machine, metrics, windows, labels: windowLabels, aggregate, rawSamples: rows.length }
 }
 
+/**
+ * The operators' anomaly-free training period for a machine, aggregated the
+ * same way as the test split. Used to learn parameters without ever seeing a
+ * test label.
+ */
+export function loadTrainMachine(machine, { dir = SMD_DIR, aggregate = 5 } = {}) {
+  const dataPath = join(dir, `train_${machine}.txt`)
+  if (!existsSync(dataPath)) {
+    throw new Error(`SMD train split for "${machine}" not found. Run: npm run fetch:dataset`)
+  }
+
+  const rows = readMatrix(dataPath)
+  const channelCount = rows[0].length
+  const metrics = Array.from({ length: channelCount }, (_, i) => `c${String(i).padStart(2, '0')}`)
+  const windows = []
+
+  for (let start = 0; start + aggregate <= rows.length; start += aggregate) {
+    const window = { window_number: windows.length + 1 }
+    for (let c = 0; c < channelCount; c++) {
+      let sum = 0
+      for (let k = 0; k < aggregate; k++) sum += rows[start + k][c]
+      window[metrics[c]] = sum / aggregate
+    }
+    windows.push(window)
+  }
+
+  return { machine, metrics, windows }
+}
+
 /** Contiguous runs of anomalous windows, i.e. distinct incidents. */
 export function labelSegments(labels) {
   const segments = []

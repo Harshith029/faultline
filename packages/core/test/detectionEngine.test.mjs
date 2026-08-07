@@ -122,6 +122,36 @@ test('detects on an arbitrary metric set the project has never seen', () => {
   assert.ok(!('p99_latency_z' in latest.metrics), 'default metrics must not leak in')
 })
 
+test('zThresholdPerMetric raises the bar for a chosen channel only', () => {
+  const raw = []
+  for (let i = 1; i <= 12; i++) {
+    const escalating = i >= 6 ? 1 : 0
+    raw.push({
+      window_number: i,
+      p99_latency: 100 + (i % 2) + escalating * 40,
+      retry_rate: 0.5 + (i % 2) * 0.02 + escalating * 0.3,
+      error_rate: 0.2 + (i % 2) * 0.01,
+    })
+  }
+
+  const uniform = runDetection(raw, DEFAULT_PARAMS)
+  assert.notEqual(uniform.detectionWindow, null, 'both signals should qualify by default')
+
+  // Demanding far more evidence from retry_rate leaves only one signal, and
+  // minSignals then blocks the trigger.
+  const perMetric = runDetection(raw, {
+    ...DEFAULT_PARAMS,
+    zThresholdPerMetric: { retry_rate: 50 },
+  })
+  assert.equal(perMetric.detectionWindow, null)
+
+  const latest = perMetric.windows.at(-1)
+  assert.ok(
+    latest.qualified_signals.every((s) => s.metric !== 'retry_rate_z'),
+    'the raised channel must not qualify'
+  )
+})
+
 test('metricMeta derives a readable label for unknown metrics', () => {
   assert.equal(metricMeta('p99_latency').label, 'P99 latency')
   assert.equal(metricMeta('queue_depth').label, 'Queue depth')

@@ -50,14 +50,24 @@ export function zScore(value, baseline) {
   return (value - baseline.mean) / baseline.sigma
 }
 
-function qualifyMetric(zSeries, params) {
+function qualifyMetric(zSeries, params, threshold = params.zThreshold) {
   let run = 0
   return zSeries.map((z) => {
-    if (z >= params.zThreshold) run += 1
+    if (z >= threshold) run += 1
     else run = 0
     return { z, sustained: run, qualified: run >= params.minSustain }
   })
 }
+
+/**
+ * The sigma level at which a metric counts as elevated.
+ *
+ * `zThresholdPerMetric` lets a naturally bursty channel demand more evidence
+ * than a rock-steady one, instead of holding every channel to a single global
+ * number. Falls back to `zThreshold` for anything unlisted.
+ */
+const thresholdFor = (metric, params) =>
+  params.zThresholdPerMetric?.[metric] ?? params.zThreshold
 
 export function riskScore(qualifiedZ, params) {
   if (qualifiedZ.length === 0) return 0
@@ -81,7 +91,7 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
     const absFloor = params.sigmaFloorAbs?.[key] ?? 0
     baselines[key] = absFloor > base.sigma ? { ...base, sigma: absFloor } : base
     const zs = values.map((v) => zScore(v, baselines[key]))
-    qualifiedSeries[key] = qualifyMetric(zs, params)
+    qualifiedSeries[key] = qualifyMetric(zs, params, thresholdFor(key, params))
   }
 
   const windows = raw.map((w, i) => {

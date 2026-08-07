@@ -28,6 +28,39 @@ export function smdParams(metrics, overrides = {}) {
 const zOf = (value, baseline) => (value - baseline.mean) / baseline.sigma
 
 /**
+ * Learns a per-channel z threshold from the anomaly-free training split.
+ *
+ * A channel that routinely swings to 4 sigma during healthy operation should
+ * not qualify at 2; a steady channel should not be made *more* twitchy either,
+ * so learned thresholds are floored at the global default and can only raise
+ * the bar. Thresholds are derived exclusively from train data — the test labels
+ * are never consulted, so this is not fitted to the answer.
+ */
+export function learnThresholds(trainWindows, { metrics, params, historyWindows = 120, quantile = 0.995, cap = 8 }) {
+  const samples = Object.fromEntries(metrics.map((m) => [m, []]))
+  const minWindows = params.baselineWindows + params.minSustain
+
+  for (let i = minWindows - 1; i < trainWindows.length; i++) {
+    const from = Math.max(0, i - historyWindows + 1)
+    const buffer = trainWindows.slice(from, i + 1)
+    const latest = buffer[buffer.length - 1]
+    for (const m of metrics) {
+      const base = computeBaseline(buffer.map((w) => w[m]), params)
+      const sigma = Math.max(base.sigma, params.sigmaFloorAbs?.[m] ?? 0)
+      samples[m].push(zOf(latest[m], { mean: base.mean, sigma }))
+    }
+  }
+
+  const thresholds = {}
+  for (const m of metrics) {
+    const sorted = samples[m].sort((a, b) => a - b)
+    const q = sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * quantile))] : 0
+    thresholds[m] = Math.min(cap, Math.max(params.zThreshold, Number(q.toFixed(2))))
+  }
+  return thresholds
+}
+
+/**
  * Replays a series the way the agent would: at every window, only the preceding
  * `historyWindows` samples are visible. No detector can see the future.
  */
@@ -46,6 +79,12 @@ export function rollingDetect(windows, { metrics, params, historyWindows = 120, 
 
 export const DETECTORS = {
   faultline: (buffer, { params }) => {
+    const result = runDetection(buffer, params)
+    return result.windows[result.windows.length - 1].triggered
+  },
+
+  // Identical engine; only the per-channel thresholds differ.
+  faultline_learned: (buffer, { params }) => {
     const result = runDetection(buffer, params)
     return result.windows[result.windows.length - 1].triggered
   },
@@ -138,11 +177,19 @@ export function scoreDetections(fired, labels) {
   }
 }
 
-export function backtestMachine(dataset, { historyWindows = 120, paramOverrides = {} } = {}) {
-  const params = smdParams(dataset.metrics, paramOverrides)
+export function backtestMachine(
+  dataset,
+  { historyWindows = 120, paramOverrides = {}, learnedThresholds = null } = {}
+) {
   const results = {}
 
   for (const [key, detector] of Object.entries(DETECTORS)) {
+    if (key === 'faultline_learned' && !learnedThresholds) continue
+
+    const params = smdParams(dataset.metrics, {
+      ...paramOverrides,
+      ...(key === 'faultline_learned' ? { zThresholdPerMetric: learnedThresholds } : {}),
+    })
     const fired = rollingDetect(dataset.windows, {
       metrics: dataset.metrics,
       params,
