@@ -1,6 +1,7 @@
 const escapeRegex = (s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
 
-const globToRegExp = (pattern) => new RegExp(`^${escapeRegex(pattern).replace(/\*/g, '.*')}$`)
+export const globToRegExp = (pattern) =>
+  new RegExp(`^${escapeRegex(pattern).replace(/\*/g, '.*')}$`)
 
 export const OVERRIDABLE = [
   'metrics',

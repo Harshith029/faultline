@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { OVERRIDABLE } from './serviceConfig.js'
+import { validateSilence } from './silences.js'
 
 export const DEFAULT_CONFIG = {
   agent: { name: 'faultline-agent' },
@@ -23,6 +24,9 @@ export const DEFAULT_CONFIG = {
   // Per-service overrides. Each entry needs a `match` (exact name or glob) and
   // may override any detector parameter for the services it matches.
   services: [],
+  // Recurring maintenance windows. Ad-hoc silences are added at runtime via
+  // the API and persisted separately.
+  silences: [],
   alerting: {
     cooldownSeconds: 300,
     resolveAfterWindows: 3,
@@ -169,6 +173,16 @@ export function validateConfig(config) {
         if (rule[key] !== undefined && (!Number.isInteger(rule[key]) || rule[key] < 1)) {
           errors.push(`services[${i}].${key} must be an integer >= 1`)
         }
+      }
+    })
+  }
+
+  if (!Array.isArray(config.silences)) {
+    errors.push('silences must be an array of maintenance-window rules')
+  } else {
+    config.silences.forEach((silence, i) => {
+      for (const problem of validateSilence(silence)) {
+        errors.push(`silences[${i}] ${problem}`)
       }
     })
   }

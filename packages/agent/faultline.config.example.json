@@ -37,6 +37,10 @@
     { "match": "batch-*", "name": "batch", "minSustain": 4, "triggerThreshold": 6 }
   ],
 
+  "silences": [
+    { "match": "batch-*", "name": "nightly-batch", "daily": { "start": "02:00", "end": "04:00" } }
+  ],
+
   "alerting": {
     "cooldownSeconds": 600,
     "resolveAfterWindows": 3,

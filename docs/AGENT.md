@@ -120,6 +120,60 @@ profile per service and `serviceProfiles` lists every compiled rule:
 
 A `profile` of `null` means no rule matched and the global config applies.
 
+## Silences and maintenance windows
+
+Nobody runs alerting that cannot be muted during a deploy. Silences suppress
+notifications for matching services; **detection keeps running**, so the risk
+score stays visible and the incident is still recorded for the postmortem. Only
+the page is withheld.
+
+Recurring windows live in config:
+
+```json
+"silences": [
+  { "match": "batch-*", "name": "nightly-batch", "daily": { "start": "02:00", "end": "04:00" } },
+  { "match": "reporting", "name": "weekend", "daily": { "start": "00:00", "end": "23:59" }, "days": [0, 6] }
+]
+```
+
+Ad-hoc silences go through the API, because during an incident you cannot
+restart the agent to mute it:
+
+```bash
+curl -X POST localhost:8787/api/silences \
+  -H 'Content-Type: application/json' \
+  -d '{"match":"checkout-*","until":"2026-03-05T14:00:00Z","reason":"deploy 42","createdBy":"harsh"}'
+
+curl localhost:8787/api/silences?active=true
+curl -X DELETE localhost:8787/api/silences/<id>
+```
+
+| Field | Meaning |
+|---|---|
+| `match` | Exact service name or glob. Required. |
+| `from` / `until` | ISO bounds for a one-off window. |
+| `daily` | `{ "start": "HH:MM", "end": "HH:MM" }`, recurring. Wraps past midnight. |
+| `days` | Weekday filter, `0` = Sunday. |
+| `reason` / `createdBy` | Free text, echoed in logs and the API. |
+
+**All times are UTC**, deliberately: an agent that silently follows a server's
+local timezone will eventually mute the wrong hours after a DST shift.
+
+Runtime silences are persisted and survive restarts; expired ones are pruned
+automatically. Config silences cannot be deleted through the API — they belong
+to the file, so a `DELETE` on one returns 400 rather than a change that would
+vanish on the next restart.
+
+**A silence never loses an incident.** If one opens while a service is muted, it
+is recorded but not sent. If it is *still firing* when the window ends, it is
+announced then. A resolve notification is only sent if the corresponding open
+was, so you are never told something recovered that you were never told broke.
+
+Observability: `GET /api/state` reports `silencedBy` per service, and
+`/metrics` exposes `faultline_service_silenced{service}` and
+`faultline_silences_active`. Alerting on a silence that has been active far
+longer than intended is a good habit.
+
 ## Tuning to your traffic
 
 Start with the defaults and one week of observation, then adjust:
@@ -182,6 +236,9 @@ Notifier failures are logged as `notify.failed` and never interrupt detection.
 | `GET /api/windows?service=` | Full engine output for charting. |
 | `GET /metrics` | Prometheus exposition format. |
 | `POST /api/inject?service=` | Inject a synthetic fault (synthetic source only). |
+| `GET /api/silences` | List silences. `?active=true` for currently in force. |
+| `POST /api/silences` | Create an ad-hoc silence. |
+| `DELETE /api/silences/:id` | Remove a runtime silence (config ones return 400). |
 
 The API is unauthenticated and CORS-open by design: it is meant to bind to
 localhost or a private network. **Do not expose it to the internet.** Put it

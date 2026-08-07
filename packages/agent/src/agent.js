@@ -1,5 +1,6 @@
 import { detectorParams } from './config.js'
 import { compileServiceRules, createParamsResolver } from './serviceConfig.js'
+import { SilenceManager } from './silences.js'
 import { createLogger } from './logger.js'
 import { createSource } from './sources/index.js'
 import { RollingDetector } from './detector.js'
@@ -28,6 +29,7 @@ export class FaultlineAgent {
     })
     this.alerts = new AlertManager(config.alerting)
     this.notifiers = createNotifiers(config.alerting.notifiers, ctx)
+    this.silences = new SilenceManager({ configSilences: config.silences, logger: this.logger })
     this.store = new Store({ ...config.storage, logger: this.logger })
 
     this.server = null
@@ -42,8 +44,43 @@ export class FaultlineAgent {
     this.latest = new Map()
   }
 
+  /** Mirrors runtime silences into the durable store. */
+  syncSilences() {
+    this.silences.prune()
+    this.store.silences = this.silences.persistable()
+    this.store.markDirty()
+  }
+
+  /**
+   * Sends an alert unless the service is silenced.
+   *
+   * `notifiedAt` is what makes a maintenance window safe: an incident that
+   * opens while silenced is recorded but not sent, and if it is still firing
+   * once the window ends it is announced then rather than being lost. A resolve
+   * is only sent if the open was.
+   */
+  async maybeNotify(type, incident) {
+    const silence = this.silences.matching(incident.service)
+    if (silence) {
+      incident.silencedBy = silence.id
+      this.logger.info('incident.silenced', {
+        incident: incident.id,
+        service: incident.service,
+        silence: silence.id,
+        reason: silence.reason ?? null,
+      })
+      return false
+    }
+
+    await this.notifiers.notify({ type, agent: this.name, incident })
+    if (type === 'incident.opened') incident.notifiedAt = new Date().toISOString()
+    return true
+  }
+
   async start() {
     await this.store.load()
+    this.silences.hydrate(this.store.silences)
+    this.syncSilences()
     this.running = true
     this.startedAtMs = Date.now()
 
@@ -112,33 +149,32 @@ export class FaultlineAgent {
         const outcome = this.alerts.evaluate({ service: result.service, evaluation: result.evaluation })
 
         if (outcome.type === 'opened') {
-          this.store.upsertIncident(outcome.incident)
           this.logger.warn('incident.opened', {
             incident: outcome.incident.id,
             service: outcome.incident.service,
             R: outcome.incident.triggerR,
             signals: outcome.incident.triggerSignalCount,
           })
-          await this.notifiers.notify({
-            type: 'incident.opened',
-            agent: this.name,
-            incident: outcome.incident,
-          })
+          await this.maybeNotify('incident.opened', outcome.incident)
+          this.store.upsertIncident(outcome.incident)
         } else if (outcome.type === 'updated') {
+          // A silence that expires mid-incident should still page: announce an
+          // incident that was never sent once it is no longer suppressed.
+          if (!outcome.incident.notifiedAt) {
+            await this.maybeNotify('incident.opened', outcome.incident)
+          }
           this.store.upsertIncident(outcome.incident)
         } else if (outcome.type === 'resolved') {
-          this.store.upsertIncident(outcome.incident)
           this.logger.info('incident.resolved', {
             incident: outcome.incident.id,
             service: outcome.incident.service,
             windowsFiring: outcome.incident.windowsFiring,
             peakR: outcome.incident.peakR,
           })
-          await this.notifiers.notify({
-            type: 'incident.resolved',
-            agent: this.name,
-            incident: outcome.incident,
-          })
+          if (outcome.incident.notifiedAt) {
+            await this.maybeNotify('incident.resolved', outcome.incident)
+          }
+          this.store.upsertIncident(outcome.incident)
         } else if (outcome.type === 'suppressed') {
           this.logger.info('incident.suppressed', {
             service: result.service,
@@ -168,6 +204,7 @@ export class FaultlineAgent {
         windowsBuffered: result.windowsBuffered,
         firing: alert?.status === 'firing',
         incidentId: alert?.incidentId ?? null,
+        silencedBy: this.silences.matching(result.service)?.id ?? null,
       }
       if (result.status !== 'evaluated') {
         return { ...base, windowsRequired: result.windowsRequired }
@@ -203,6 +240,7 @@ export class FaultlineAgent {
       consecutiveCollectErrors: this.consecutiveCollectErrors,
       lastCollectAt: this.lastCollectAt,
       services: services.sort((a, b) => a.service.localeCompare(b.service)),
+      silences: this.silences.list({ activeOnly: true }).length,
       incidents: this.store.stats(),
     }
   }

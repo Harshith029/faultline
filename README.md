@@ -100,6 +100,16 @@ Convergence scoring works identically: any two of those drifting together opens 
 
 `GET /api/state` reports which profile matched each service, so you can tell at a glance whether a rule is actually in effect.
 
+**Mute it during a deploy.** Silences suppress paging without stopping detection — the risk score stays visible and the incident is still recorded, so postmortems keep the data. Recurring maintenance windows live in config; ad-hoc ones go through the API, because during an incident you can't restart the agent to mute it:
+
+```bash
+curl -X POST localhost:8787/api/silences \
+  -H 'Content-Type: application/json' \
+  -d '{"match":"checkout-*","until":"2026-03-05T14:00:00Z","reason":"deploy 42"}'
+```
+
+If an incident opens while muted and is *still firing* when the window ends, it pages then rather than being lost.
+
 **Any HTTP endpoint you already have** — `mapping` renames incoming fields, so an existing internal metrics route usually needs no new code:
 
 ```json
@@ -241,6 +251,7 @@ An incident-analysis UI over the same engine: scrub a cascade window by window, 
 | `source.type` | `synthetic` | `synthetic` · `prometheus` · `http` · `cloudwatch` |
 | `detector.metrics` | latency/retry/error | Any numeric signals your source emits |
 | `services[]` | `[]` | Per-service overrides of any detector parameter |
+| `silences[]` | `[]` | Recurring maintenance windows (UTC); ad-hoc ones via API |
 | `detector.minSignals` | `2` | Qualified signals required to trigger — enforces convergence |
 | `detector.intervalSeconds` | `60` | Collection cadence |
 | `detector.historyWindows` | `40` | Rolling buffer size per service |

@@ -13,6 +13,7 @@ export class Store {
     this.flushIntervalMs = flushIntervalMs
     this.logger = logger
     this.incidents = []
+    this.silences = []
     this.dirty = false
     this.timer = null
     this.startedAt = new Date().toISOString()
@@ -23,6 +24,7 @@ export class Store {
       const contents = await readFile(this.path, 'utf8')
       const parsed = JSON.parse(contents)
       if (Array.isArray(parsed?.incidents)) this.incidents = parsed.incidents
+      if (Array.isArray(parsed?.silences)) this.silences = parsed.silences
       this.logger?.info('store.loaded', { path: this.path, incidents: this.incidents.length })
     } catch (err) {
       if (err.code !== 'ENOENT') {
@@ -75,7 +77,12 @@ export class Store {
     if (!this.dirty) return false
     this.dirty = false
     const payload = JSON.stringify(
-      { version: 1, updatedAt: new Date().toISOString(), incidents: this.incidents },
+      {
+        version: 2,
+        updatedAt: new Date().toISOString(),
+        incidents: this.incidents,
+        silences: this.silences,
+      },
       null,
       2
     )
