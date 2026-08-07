@@ -85,13 +85,35 @@ export class FaultlineAgent {
     this.startedAtMs = Date.now()
 
     if (this.config.server.enabled) {
-      this.server = createApiServer(this, { logger: this.logger })
+      this.server = createApiServer(this, { logger: this.logger, serverConfig: this.config.server })
       await new Promise((resolve, reject) => {
         this.server.once('error', reject)
         this.server.listen(this.config.server.port, this.config.server.host, resolve)
       })
       const { address, port } = this.server.address()
-      this.logger.info('server.listening', { url: `http://${address}:${port}` })
+      const scheme = this.server.faultlineTls ? 'https' : 'http'
+      const auth = this.server.faultlineAuth
+      this.logger.info('server.listening', {
+        url: `${scheme}://${address}:${port}`,
+        tls: this.server.faultlineTls,
+        auth: auth.enabled ? (auth.allowAnonymousRead ? 'writes-only' : 'required') : 'disabled',
+      })
+
+      // The API can create silences and inject faults, so leaving it open is a
+      // real exposure. Say so loudly rather than letting it pass unnoticed.
+      if (!auth.enabled) {
+        this.logger.warn('server.unauthenticated', {
+          message:
+            'API has no token: anyone who can reach it may create silences and suppress alerting. Set FAULTLINE_API_TOKEN, or bind to localhost only.',
+          host: this.config.server.host,
+        })
+      }
+      if (!this.server.faultlineTls && this.config.server.host !== '127.0.0.1') {
+        this.logger.warn('server.plaintext', {
+          message: 'API is bound beyond localhost without TLS; tokens would cross the network in clear text.',
+          host: this.config.server.host,
+        })
+      }
     }
 
     this.logger.info('agent.started', {

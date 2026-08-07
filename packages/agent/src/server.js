@@ -1,12 +1,17 @@
 import { createServer } from 'node:http'
+import { createServer as createTlsServer } from 'node:https'
+import { readFileSync } from 'node:fs'
+import { createAuthenticator } from './auth.js'
+
+let corsOrigin = '*'
 
 const json = (res, status, body) => {
   const payload = JSON.stringify(body, null, 2)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Origin': corsOrigin,
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
     'Cache-Control': 'no-store',
   })
   res.end(payload)
@@ -15,10 +20,19 @@ const json = (res, status, body) => {
 const text = (res, status, body) => {
   res.writeHead(status, {
     'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': corsOrigin,
   })
   res.end(body)
 }
+
+// Routes that change state; everything else is a read.
+const WRITE_ROUTES = [
+  (method, path) => method === 'POST' && path === '/api/silences',
+  (method, path) => method === 'DELETE' && path.startsWith('/api/silences/'),
+  (method, path) => method === 'POST' && path === '/api/inject',
+]
+
+const isWrite = (method, path) => WRITE_ROUTES.some((test) => test(method, path))
 
 const escapeLabel = (v) => String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')
 
@@ -88,19 +102,34 @@ export function renderPrometheusMetrics(agent) {
   return lines.join('\n') + '\n'
 }
 
-export function createApiServer(agent, { logger }) {
-  const server = createServer(async (req, res) => {
+export function createApiServer(agent, { logger, serverConfig = {}, env = process.env } = {}) {
+  const auth = createAuthenticator(serverConfig, env)
+  corsOrigin = serverConfig.corsOrigin ?? '*'
+
+  const handler = async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`)
     const route = `${req.method} ${url.pathname}`
 
     try {
       if (req.method === 'OPTIONS') {
         res.writeHead(204, {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Origin': corsOrigin,
+          'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
         })
         return res.end()
+      }
+
+      const refusal = auth.authorize(req, {
+        write: isWrite(req.method, url.pathname),
+        anonymous: url.pathname === '/health',
+      })
+      if (refusal) {
+        logger.warn('server.unauthorized', { route, status: refusal.status })
+        if (refusal.status === 401) {
+          res.setHeader('WWW-Authenticate', 'Bearer realm="faultline"')
+        }
+        return json(res, refusal.status, { error: refusal.error })
       }
 
       if (route === 'GET /health') {
@@ -204,7 +233,28 @@ export function createApiServer(agent, { logger }) {
       logger.error('server.request_failed', { route, message: err.message })
       return json(res, 500, { error: 'internal error' })
     }
-  })
+  }
 
+  const tls = serverConfig.tls
+  if (tls?.certFile && tls?.keyFile) {
+    let cert
+    let key
+    try {
+      cert = readFileSync(tls.certFile)
+      key = readFileSync(tls.keyFile)
+    } catch (err) {
+      // Failing to start is the correct behaviour: silently downgrading to
+      // plaintext because a certificate is unreadable is how secrets leak.
+      throw new Error(`TLS is configured but the certificate could not be read: ${err.message}`)
+    }
+    const server = createTlsServer({ cert, key, ...(tls.caFile ? { ca: readFileSync(tls.caFile) } : {}) }, handler)
+    server.faultlineTls = true
+    server.faultlineAuth = auth
+    return server
+  }
+
+  const server = createServer(handler)
+  server.faultlineTls = false
+  server.faultlineAuth = auth
   return server
 }

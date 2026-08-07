@@ -240,9 +240,48 @@ Notifier failures are logged as `notify.failed` and never interrupt detection.
 | `POST /api/silences` | Create an ad-hoc silence. |
 | `DELETE /api/silences/:id` | Remove a runtime silence (config ones return 400). |
 
-The API is unauthenticated and CORS-open by design: it is meant to bind to
-localhost or a private network. **Do not expose it to the internet.** Put it
-behind your ingress, service mesh, or an authenticating reverse proxy.
+### Authentication
+
+The API defaults to open, which is fine on localhost and unacceptable anywhere
+else — it can create silences and therefore suppress your alerting. Set a token
+and it is enforced:
+
+```bash
+export FAULTLINE_API_TOKEN=$(openssl rand -hex 32)     # read + write
+export FAULTLINE_READ_TOKEN=$(openssl rand -hex 32)    # optional, read only
+```
+
+```bash
+curl -H "Authorization: Bearer $FAULTLINE_API_TOKEN" localhost:8787/api/state
+curl -H "X-API-Key: $FAULTLINE_READ_TOKEN" localhost:8787/metrics
+```
+
+| Behaviour | Detail |
+|---|---|
+| No token configured | Everything open, and a `server.unauthenticated` warning is logged at startup |
+| Full token | Required for writes: creating or deleting silences, injecting faults |
+| Read-only token | Reads only. Used on a write route it returns **403**, not 401 — the identity is valid, the permission is not |
+| `auth.allowAnonymousRead: true` | Reads open, writes still guarded. Convenient for Prometheus scraping on a trusted network |
+| `GET /health` | **Always anonymous.** Load balancers and Kubernetes probes must reach it before any credential exists, and it exposes no telemetry |
+
+Tokens are compared with a constant-time digest comparison, so neither their
+value nor their length leaks through response timing. They may only be supplied
+by environment variable: putting a literal `token` in the config file is a
+startup error, because config files get committed.
+
+### TLS
+
+```json
+"server": { "tls": { "certFile": "/etc/faultline/tls.crt", "keyFile": "/etc/faultline/tls.key" } }
+```
+
+If a certificate is configured but unreadable the agent **refuses to start**
+rather than quietly falling back to plaintext — silently downgrading is how
+tokens end up on the wire. Binding beyond `127.0.0.1` without TLS logs a
+`server.plaintext` warning.
+
+Terminating TLS at your ingress or service mesh instead is equally valid; the
+built-in option exists so the agent can stand alone.
 
 ### Scraping FAULTLINE with Prometheus
 
@@ -319,8 +358,10 @@ deployments with different `source` scopes instead.
 
 ## Security
 
-- No secrets belong in the config file. Use `urlEnv` or environment variables.
-- The API is unauthenticated; bind it to localhost or a private network.
+- No secrets belong in the config file. Use `urlEnv` or `tokenEnv`; literal
+  tokens in config are rejected at startup.
+- Set `FAULTLINE_API_TOKEN` for anything beyond localhost, and enable TLS or
+  terminate it at your ingress.
 - The agent makes only the outbound calls you configure: the metrics source and
   the notifier webhooks. There is no telemetry or phone-home.
 - Zero runtime dependencies means no transitive supply chain to audit.

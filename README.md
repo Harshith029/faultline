@@ -110,6 +110,15 @@ curl -X POST localhost:8787/api/silences \
 
 If an incident opens while muted and is *still firing* when the window ends, it pages then rather than being lost.
 
+**Lock down the API.** It defaults to open for the localhost quickstart, and warns loudly at startup when it is. Set a token and it is enforced — with a separate read-only scope so Prometheus can scrape metrics without being able to silence your alerts:
+
+```bash
+export FAULTLINE_API_TOKEN=$(openssl rand -hex 32)
+export FAULTLINE_READ_TOKEN=$(openssl rand -hex 32)
+```
+
+`GET /health` stays anonymous so load balancer probes keep working. TLS is built in (`server.tls`) and the agent refuses to start if a configured certificate is unreadable, rather than silently serving plaintext.
+
 **Any HTTP endpoint you already have** — `mapping` renames incoming fields, so an existing internal metrics route usually needs no new code:
 
 ```json
@@ -252,6 +261,8 @@ An incident-analysis UI over the same engine: scrub a cascade window by window, 
 | `detector.metrics` | latency/retry/error | Any numeric signals your source emits |
 | `services[]` | `[]` | Per-service overrides of any detector parameter |
 | `silences[]` | `[]` | Recurring maintenance windows (UTC); ad-hoc ones via API |
+| `server.auth` | env-based | `FAULTLINE_API_TOKEN` (read+write), `FAULTLINE_READ_TOKEN` (read) |
+| `server.tls` | `null` | `certFile` + `keyFile` for built-in HTTPS |
 | `detector.minSignals` | `2` | Qualified signals required to trigger — enforces convergence |
 | `detector.intervalSeconds` | `60` | Collection cadence |
 | `detector.historyWindows` | `40` | Rolling buffer size per service |

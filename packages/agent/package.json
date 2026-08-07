@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node bin/faultline.js start",
     "demo": "node bin/faultline.js start --config faultline.demo.json",
-    "test": "node --test test/config.test.mjs test/buffer.test.mjs test/alerts.test.mjs test/sources.test.mjs test/detector.test.mjs test/server.test.mjs test/serviceConfig.test.mjs test/silences.test.mjs test/e2e.test.mjs"
+    "test": "node --test test/config.test.mjs test/buffer.test.mjs test/alerts.test.mjs test/sources.test.mjs test/detector.test.mjs test/server.test.mjs test/serviceConfig.test.mjs test/silences.test.mjs test/auth.test.mjs test/e2e.test.mjs"
   },
   "dependencies": {
     "@faultline/core": "*"

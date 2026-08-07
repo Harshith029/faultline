@@ -32,7 +32,15 @@ export const DEFAULT_CONFIG = {
     resolveAfterWindows: 3,
     notifiers: [{ type: 'stdout' }],
   },
-  server: { enabled: true, host: '127.0.0.1', port: 8787 },
+  server: {
+    enabled: true,
+    host: '127.0.0.1',
+    port: 8787,
+    corsOrigin: '*',
+    // Tokens come from the environment so a committed config never holds one.
+    auth: { tokenEnv: 'FAULTLINE_API_TOKEN', readOnlyTokenEnv: 'FAULTLINE_READ_TOKEN', allowAnonymousRead: false },
+    tls: null,
+  },
   storage: { path: './data/faultline-state.json', maxIncidents: 200 },
   logging: { level: 'info', pretty: false },
 }
@@ -175,6 +183,29 @@ export function validateConfig(config) {
         }
       }
     })
+  }
+
+  const tls = config.server?.tls
+  if (tls != null) {
+    if (!isPlainObject(tls)) {
+      errors.push('server.tls must be an object with certFile and keyFile, or null')
+    } else if (!tls.certFile || !tls.keyFile) {
+      errors.push('server.tls requires both "certFile" and "keyFile"')
+    }
+  }
+
+  const auth = config.server?.auth
+  if (auth != null && !isPlainObject(auth)) {
+    errors.push('server.auth must be an object, or null')
+  } else if (isPlainObject(auth)) {
+    if (auth.token !== undefined || auth.readOnlyToken !== undefined) {
+      errors.push(
+        'server.auth must not contain literal tokens. Use tokenEnv / readOnlyTokenEnv so credentials stay out of config files.'
+      )
+    }
+    if (auth.allowAnonymousRead !== undefined && typeof auth.allowAnonymousRead !== 'boolean') {
+      errors.push('server.auth.allowAnonymousRead must be a boolean')
+    }
   }
 
   if (!Array.isArray(config.silences)) {

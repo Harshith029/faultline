@@ -51,7 +51,17 @@
     ]
   },
 
-  "server": { "enabled": true, "host": "0.0.0.0", "port": 8787 },
+  "server": {
+    "enabled": true,
+    "host": "0.0.0.0",
+    "port": 8787,
+    "auth": {
+      "tokenEnv": "FAULTLINE_API_TOKEN",
+      "readOnlyTokenEnv": "FAULTLINE_READ_TOKEN",
+      "allowAnonymousRead": false
+    },
+    "tls": null
+  },
   "storage": { "path": "./data/faultline-state.json", "maxIncidents": 500 },
   "logging": { "level": "info", "pretty": false }
 }
