@@ -32,6 +32,7 @@ if (machines.length === 0) {
 const DETECTOR_LABELS = {
   faultline: 'FAULTLINE',
   faultline_learned: 'FAULTLINE +learned',
+  faultline_mad: 'FAULTLINE +MAD',
   single_3sigma: 'Single metric 3σ',
   sustained_3sigma: 'Sustained 3σ',
 }

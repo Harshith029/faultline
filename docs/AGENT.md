@@ -89,6 +89,14 @@ exactly `minSustain` windows is otherwise indistinguishable from the start of a
 real cascade. Raising `triggerThreshold` or `zThreshold` also works but blunts
 sensitivity to genuine slow burns.
 
+**Spiky channels distorting the baseline** — `statistic: "median_mad"` swaps
+mean and standard deviation for median and MAD, which ordinary spikes barely
+move. Be aware of what it does and does not buy: on the real-telemetry backtest
+it produced no precision improvement once alert volume was held constant, so
+treat it as an option for unusual data shapes rather than a fix for noisy
+alerting. MAD yields larger z-scores, so raise `zThreshold` (roughly 2.0 → 3.0)
+if you enable it, or the detector simply becomes more sensitive.
+
 **A single metric shouldn't be able to page anyone** — that is enforced by
 `minSignals` (default 2): an incident requires at least two qualified signals
 regardless of how extreme one of them is. Set it to 1 only if you want

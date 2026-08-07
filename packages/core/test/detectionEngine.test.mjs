@@ -122,6 +122,42 @@ test('detects on an arbitrary metric set the project has never seen', () => {
   assert.ok(!('p99_latency_z' in latest.metrics), 'default metrics must not leak in')
 })
 
+test('median/MAD resists outliers that distort mean/sigma', () => {
+  // A clean baseline with two ordinary spikes: the kind of shape that is
+  // everywhere in real server telemetry.
+  const values = [10, 10, 11, 10, 60, 10, 11, 55, 10, 10, 11, 10]
+  const params = { ...DEFAULT_PARAMS, baselineWindows: 12, sigmaFloorRatio: 0 }
+
+  const classic = computeBaseline(values, params)
+  const robust = computeBaseline(values, { ...params, statistic: 'median_mad' })
+
+  assert.ok(classic.mean > 14, 'the spikes drag the mean upward')
+  assert.ok(robust.mean <= 11, 'the median ignores them')
+  assert.ok(robust.sigma < classic.sigma / 5, 'MAD is not inflated by the spikes')
+  assert.equal(robust.statistic, 'median_mad')
+  assert.equal(classic.statistic, 'mean_sigma')
+})
+
+test('median/MAD keeps detection working end to end', () => {
+  const raw = []
+  for (let i = 1; i <= 14; i++) {
+    const escalating = i >= 8 ? (i - 7) * 2 : 0
+    raw.push({
+      window_number: i,
+      p99_latency: 100 + (i % 2) * 3 + escalating * 12,
+      retry_rate: 0.5 + (i % 2) * 0.03 + escalating * 0.12,
+      error_rate: 0.2 + (i % 2) * 0.02 + escalating * 0.05,
+    })
+  }
+  const result = runDetection(raw, {
+    ...DEFAULT_PARAMS,
+    baselineWindows: 6,
+    statistic: 'median_mad',
+  })
+  assert.notEqual(result.detectionWindow, null, 'a cascade should still be detected under MAD')
+  assert.ok(result.detectionWindow.window_number >= 8, 'detection must not precede the fault')
+})
+
 test('zThresholdPerMetric raises the bar for a chosen channel only', () => {
   const raw = []
   for (let i = 1; i <= 12; i++) {

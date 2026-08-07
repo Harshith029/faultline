@@ -234,29 +234,91 @@ The learner and the `faultline_learned` detector remain in the benchmark package
 so these numbers stay reproducible — the benchmark is a research log, and a
 negative result nobody can re-run is not evidence.
 
+## Tried and rejected: robust statistics (median/MAD)
+
+The previous section concluded that the base statistic was the problem: healthy
+channels producing 8-sigma excursions means mean and standard deviation are
+being distorted by ordinary spikes. The fix follows directly — replace them with
+median and MAD, which have a 50% breakdown point.
+
+It was implemented (`statistic: 'median_mad'`) and it does exactly what the
+statistics textbook promises. On a baseline of `[10,10,11,10,60,10,11,55,...]`
+the mean is dragged above 14 while the median stays at 10, and MAD is a fifth of
+the standard deviation. The robustness is real and unit-tested.
+
+It made no difference to detection quality.
+
+The naive comparison at the same threshold looks bad for MAD (F1 20.3% vs
+23.9%), but that is not a fair test: MAD produces a smaller spread estimate, so
+z-scores come out larger and the detector is simply more sensitive. The correct
+comparison holds **alert volume** fixed:
+
+| Statistic | zThreshold | Alerts | False alerts | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|---:|---:|
+| mean / sigma | 2.0 | 633 | 544 | 14.1% | 80.5% | **23.9%** |
+| median / MAD | 2.0 | 806 | 713 | 11.5% | 85.4% | 20.3% |
+| median / MAD | 2.5 | 779 | 687 | 11.8% | 82.9% | 20.7% |
+| **median / MAD** | **3.0** | **642** | 555 | 13.6% | **80.5%** | 23.2% |
+| median / MAD | 3.5 | 588 | 509 | 13.4% | 78.0% | 22.9% |
+| median / MAD | 4.0 | 560 | 485 | 13.4% | 73.2% | 22.6% |
+
+At matched volume (642 alerts vs 633) MAD delivers **identical recall and
+marginally worse precision**. Every threshold from 2.0 to 4.0 lands on the same
+precision/recall curve as mean/sigma. Robustifying the spread estimate moves the
+operating point along the curve; it does not move the curve.
+
+Kept anyway, defaulted off: `statistic: 'median_mad'` is a correct, standard,
+well-understood option with no failure mode, and on machine-1-1 it detected
+about five windows earlier at equal recall. It is offered as a supported choice
+for data shapes where it may help — not as a fix for false positives, because
+on this dataset it measurably is not one.
+
+## The pattern across three rejected ideas
+
+Change-point detection, learned thresholds and robust statistics all failed, and
+they failed in a way that points somewhere specific. Each was a refinement of
+*how the numbers are computed* — a better baseline, a better threshold, a better
+spread estimate. None of them changed **what is being measured**, and none of
+them moved the precision/recall curve outward.
+
+The conclusion the data supports:
+
+> On this dataset the limiting factor is not statistical technique. It is that
+> "two or more channels drifted upward together" does not, on its own,
+> distinguish the excursions operators labelled as incidents from the many they
+> did not. The signal is under-specified, not badly estimated.
+
+That reframes what is worth trying next. The only remaining roadmap item that
+changes the signal rather than the arithmetic is correlation structure —
+weighting convergence by whether the channels involved are *historically*
+related, so that two channels which always move together count as less evidence
+than two that never do. Whether that succeeds is an open question, but it is at
+least asking a different one.
+
 ## What would actually move the number
 
 In rough order of expected value, with tried-and-rejected items struck:
 
 1. ~~Change-point detection~~ — tried, measured, made things worse.
 2. ~~Per-channel learned thresholds~~ — tried, better on average, catastrophic
-   on one machine in four. Rejected, and it exposed the item below.
-3. **Robust statistics: median/MAD instead of mean/sigma.** The diagnosis above
-   says the base statistic, not the threshold, is what breaks on real telemetry.
-   Now the highest-value untried change.
-4. **Seasonality awareness.** Daily and weekly cycles are currently
-   indistinguishable from drift.
-5. **Correlation structure.** Convergence currently means "≥ N signals
+   on one machine in four.
+3. ~~Robust statistics (median/MAD)~~ — tried, indistinguishable at matched
+   alert volume. Kept as an option, defaulted off.
+4. **Correlation structure.** Convergence currently means "≥ N signals
    qualified". Weighting by whether those channels are *historically* correlated
-   would separate genuine cascades from unrelated coincident movement.
+   would separate genuine cascades from unrelated coincident movement. The only
+   remaining item that changes the signal rather than the arithmetic, which is
+   why it is now ranked above seasonality.
+5. **Seasonality awareness.** Daily and weekly cycles are currently
+   indistinguishable from drift.
 
-Items 3–5 are not implemented. They are the honest roadmap, and the backtest
-harness exists to tell whether any of them help — as it already did for items 1
-and 2, by rejecting both.
+Items 4–5 are not implemented. They are the honest roadmap, and the backtest
+harness exists to tell whether either helps — as it already did for items 1–3,
+by rejecting all three.
 
 That is the point of this document. Every idea gets measured against real
-labelled data before it ships. Two of the first three ideas lost, and saying so
-is more useful than a roadmap of untested optimism.
+labelled data before it ships. The first three ideas all lost, and saying so is
+more useful than a roadmap of untested optimism.
 
 **A note on reading aggregate metrics.** Item 2 improved aggregate F1 by 21% and
 cut false alerts by two thirds, and was still the wrong thing to ship, because

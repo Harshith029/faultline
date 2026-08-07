@@ -89,6 +89,12 @@ export const DETECTORS = {
     return result.windows[result.windows.length - 1].triggered
   },
 
+  // Identical engine; median/MAD instead of mean/sigma.
+  faultline_mad: (buffer, { params }) => {
+    const result = runDetection(buffer, params)
+    return result.windows[result.windows.length - 1].triggered
+  },
+
   single_3sigma: (buffer, { metrics, params }) => {
     const latest = buffer[buffer.length - 1]
     return metrics.some((m) => {
@@ -189,6 +195,7 @@ export function backtestMachine(
     const params = smdParams(dataset.metrics, {
       ...paramOverrides,
       ...(key === 'faultline_learned' ? { zThresholdPerMetric: learnedThresholds } : {}),
+      ...(key === 'faultline_mad' ? { statistic: 'median_mad' } : {}),
     })
     const fired = rollingDetect(dataset.windows, {
       metrics: dataset.metrics,

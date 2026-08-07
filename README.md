@@ -270,7 +270,9 @@ Covers the engine math, config validation, incident state machine, every telemet
 
 ## Roadmap
 
-Driven by what the [backtest](docs/BACKTEST.md) actually showed. Its first two items have already been tried and rejected on measurement: **change-point detection** made precision and recall worse, and **per-channel learned thresholds** improved aggregate F1 while sending one machine in four completely blind. That second failure exposed the real problem — z-scores assume Gaussian data and server telemetry is spiky — so the current top item is replacing mean/σ with robust median/MAD statistics.
+Driven by what the [backtest](docs/BACKTEST.md) actually showed. Its first three items have all been tried and rejected on measurement: **change-point detection** made precision and recall worse; **per-channel learned thresholds** improved aggregate F1 while sending one machine in four completely blind; **robust median/MAD statistics** proved indistinguishable from mean/σ once alert volume was held constant (kept as an option, defaulted off).
+
+Three refinements of *how the numbers are computed* changed nothing, which is itself the most useful result so far: on this data the limit is not statistical technique but that "two channels drifted up together" does not separate the excursions operators called incidents from the ones they did not. The remaining work that changes the *signal* rather than the arithmetic is correlation structure.
 
 - **Change-point detection** — most false positives are level shifts, not drift. Recognizing "this is a new normal" would remove a whole class of them.
 - **Per-channel learned thresholds** — one global `zThreshold` across heterogeneous channels is crude.

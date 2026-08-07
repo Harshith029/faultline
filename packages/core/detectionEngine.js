@@ -9,6 +9,8 @@ export const DEFAULT_PARAMS = {
   minSignals: 2,
   metrics: ['p99_latency', 'retry_rate', 'error_rate'],
   sloMetric: 'error_rate',
+  // 'mean_sigma' (classic z-score) or 'median_mad' (robust to spiky channels).
+  statistic: 'mean_sigma',
 }
 
 const METRIC_KEYS = DEFAULT_PARAMS.metrics
@@ -38,12 +40,42 @@ const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length
 const stdev = (xs, mu) =>
   Math.sqrt(xs.reduce((a, b) => a + (b - mu) ** 2, 0) / xs.length)
 
+const median = (xs) => {
+  const sorted = [...xs].sort((a, b) => a - b)
+  const mid = sorted.length >> 1
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+// Scaling MAD by this constant makes it a consistent estimator of the standard
+// deviation for normally distributed data, so thresholds stay comparable
+// whichever statistic is in use.
+const MAD_TO_SIGMA = 1.4826
+
+/**
+ * Baseline centre and spread for a metric.
+ *
+ * `statistic: 'median_mad'` swaps mean/standard-deviation for median/MAD.
+ * Mean and sigma are both badly non-robust: a handful of ordinary spikes in a
+ * bursty channel inflates sigma and suppresses every later score. Median and
+ * MAD have a 50% breakdown point, so the same spikes barely move them.
+ *
+ * `mean` holds the centre estimate under either statistic, so every consumer
+ * downstream is unaffected by the choice.
+ */
 export function computeBaseline(values, params = DEFAULT_PARAMS) {
   const slice = values.slice(0, params.baselineWindows)
+
+  if (params.statistic === 'median_mad') {
+    const centre = median(slice)
+    const scale = MAD_TO_SIGMA * median(slice.map((v) => Math.abs(v - centre)))
+    const sigma = Math.max(scale, Math.abs(centre) * params.sigmaFloorRatio, 1e-9)
+    return { mean: centre, sigma, rawSigma: scale, statistic: 'median_mad' }
+  }
+
   const mu = mean(slice)
   const rawSigma = stdev(slice, mu)
   const sigma = Math.max(rawSigma, Math.abs(mu) * params.sigmaFloorRatio, 1e-9)
-  return { mean: mu, sigma, rawSigma }
+  return { mean: mu, sigma, rawSigma, statistic: 'mean_sigma' }
 }
 
 export function zScore(value, baseline) {
