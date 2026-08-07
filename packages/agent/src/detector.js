@@ -12,9 +12,11 @@ const DEFAULT_METRICS = ['p99_latency', 'retry_rate', 'error_rate']
  * `historyWindows` for the longest incident you expect to alert on.
  */
 export class RollingDetector {
-  constructor({ params, historyWindows = 40, logger }) {
+  constructor({ params, resolveParams, historyWindows = 40, logger }) {
     this.params = params
     this.metrics = params.metrics?.length ? params.metrics : DEFAULT_METRICS
+    // Per-service overrides; falls back to one shared profile when unconfigured.
+    this.resolveParams = resolveParams ?? (() => ({ params, profile: null }))
     this.historyWindows = historyWindows
     this.logger = logger
     this.buffer = new WindowBuffer(historyWindows)
@@ -22,12 +24,22 @@ export class RollingDetector {
     this.minWindows = params.baselineWindows + params.minSustain
   }
 
-  normalizeSample(sample) {
+  paramsFor(service) {
+    const { params, profile } = this.resolveParams(service)
+    return {
+      params,
+      profile,
+      metrics: params.metrics?.length ? params.metrics : DEFAULT_METRICS,
+      minWindows: params.baselineWindows + params.minSustain,
+    }
+  }
+
+  normalizeSample(sample, metrics = this.metrics) {
     const out = {
       service: String(sample.service),
       timestamp: sample.timestamp ?? new Date().toISOString(),
     }
-    for (const metric of this.metrics) {
+    for (const metric of metrics) {
       const value = Number(sample[metric])
       out[metric] = Number.isFinite(value) ? value : 0
     }
@@ -40,19 +52,23 @@ export class RollingDetector {
 
     for (const raw of samples ?? []) {
       if (raw?.service === undefined || raw.service === null) continue
-      const sample = this.normalizeSample(raw)
+      const { metrics } = this.paramsFor(String(raw.service))
+      const sample = this.normalizeSample(raw, metrics)
       this.buffer.push(sample.service, sample)
       seen.add(sample.service)
     }
 
     for (const service of seen) {
       const series = this.buffer.get(service)
-      if (series.length < this.minWindows) {
+      const { params, profile, metrics, minWindows } = this.paramsFor(service)
+
+      if (series.length < minWindows) {
         results.push({
           service,
+          profile,
           status: 'warming_up',
           windowsBuffered: series.length,
-          windowsRequired: this.minWindows,
+          windowsRequired: minWindows,
         })
         continue
       }
@@ -63,16 +79,17 @@ export class RollingDetector {
           window_number: i + 1,
           window_timestamp: sample.timestamp,
         }
-        for (const metric of this.metrics) window[metric] = sample[metric]
+        for (const metric of metrics) window[metric] = sample[metric]
         return window
       })
 
-      const detection = runDetection(windows, this.params)
+      const detection = runDetection(windows, params)
       this.detections.set(service, { detection, updatedAt: new Date(nowMs).toISOString() })
 
       const latest = detection.windows[detection.windows.length - 1]
       results.push({
         service,
+        profile,
         status: 'evaluated',
         windowsBuffered: series.length,
         evaluation: {

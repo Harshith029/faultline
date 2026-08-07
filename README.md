@@ -88,6 +88,18 @@ Everything is driven by one config file. Copy [`packages/agent/faultline.config.
 
 Convergence scoring works identically: any two of those drifting together opens an incident.
 
+**Different services, different rules.** A checkout API and a nightly batch job should not share a threshold, so any detector parameter can be overridden per service. Exact names beat wildcards, and the first matching wildcard wins:
+
+```json
+"services": [
+  { "match": "checkout-api", "name": "tier-1", "criticalityWeight": 3, "triggerThreshold": 2.5 },
+  { "match": "queue-*", "metrics": ["queue_depth", "consumer_lag"] },
+  { "match": "batch-*", "minSustain": 4, "triggerThreshold": 6 }
+]
+```
+
+`GET /api/state` reports which profile matched each service, so you can tell at a glance whether a rule is actually in effect.
+
 **Any HTTP endpoint you already have** — `mapping` renames incoming fields, so an existing internal metrics route usually needs no new code:
 
 ```json
@@ -228,6 +240,7 @@ An incident-analysis UI over the same engine: scrub a cascade window by window, 
 |---|---|---|
 | `source.type` | `synthetic` | `synthetic` · `prometheus` · `http` · `cloudwatch` |
 | `detector.metrics` | latency/retry/error | Any numeric signals your source emits |
+| `services[]` | `[]` | Per-service overrides of any detector parameter |
 | `detector.minSignals` | `2` | Qualified signals required to trigger — enforces convergence |
 | `detector.intervalSeconds` | `60` | Collection cadence |
 | `detector.historyWindows` | `40` | Rolling buffer size per service |

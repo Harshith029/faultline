@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { OVERRIDABLE } from './serviceConfig.js'
 
 export const DEFAULT_CONFIG = {
   agent: { name: 'faultline-agent' },
@@ -19,6 +20,9 @@ export const DEFAULT_CONFIG = {
     // these three are simply the defaults the reference scenario uses.
     metrics: ['p99_latency', 'retry_rate', 'error_rate'],
   },
+  // Per-service overrides. Each entry needs a `match` (exact name or glob) and
+  // may override any detector parameter for the services it matches.
+  services: [],
   alerting: {
     cooldownSeconds: 300,
     resolveAfterWindows: 3,
@@ -123,6 +127,50 @@ export function validateConfig(config) {
         `detector.minSignals (${config.detector.minSignals}) cannot exceed the number of metrics (${metrics.length})`
       )
     }
+  }
+
+  if (!Array.isArray(config.services)) {
+    errors.push('services must be an array of per-service override rules')
+  } else {
+    const seen = new Set()
+    config.services.forEach((rule, i) => {
+      if (typeof rule?.match !== 'string' || rule.match.trim() === '') {
+        errors.push(`services[${i}] requires a non-empty "match" (exact service name or glob)`)
+        return
+      }
+      if (seen.has(rule.match)) errors.push(`services[${i}] duplicates match "${rule.match}"`)
+      seen.add(rule.match)
+
+      for (const key of Object.keys(rule)) {
+        if (key !== 'match' && key !== 'name' && !OVERRIDABLE.includes(key)) {
+          errors.push(
+            `services[${i}] cannot override "${key}". Overridable: ${OVERRIDABLE.join(', ')}`
+          )
+        }
+      }
+      if (rule.metrics !== undefined) {
+        if (!Array.isArray(rule.metrics) || rule.metrics.length === 0) {
+          errors.push(`services[${i}].metrics must be a non-empty array`)
+        } else if (
+          Number.isFinite(rule.minSignals ?? config.detector?.minSignals) &&
+          (rule.minSignals ?? config.detector.minSignals) > rule.metrics.length
+        ) {
+          errors.push(
+            `services[${i}] minSignals exceeds its own metrics count (${rule.metrics.length})`
+          )
+        }
+      }
+      for (const key of ['zThreshold', 'triggerThreshold', 'criticalityWeight', 'sigmaFloorRatio']) {
+        if (rule[key] !== undefined && (typeof rule[key] !== 'number' || !Number.isFinite(rule[key]))) {
+          errors.push(`services[${i}].${key} must be a finite number`)
+        }
+      }
+      for (const key of ['minSustain', 'minSignals', 'baselineWindows']) {
+        if (rule[key] !== undefined && (!Number.isInteger(rule[key]) || rule[key] < 1)) {
+          errors.push(`services[${i}].${key} must be an integer >= 1`)
+        }
+      }
+    })
   }
 
   if (errors.length) {

@@ -77,6 +77,49 @@ number of metrics configured. With a single metric you must set it to 1, which
 turns FAULTLINE into a sustained-threshold detector and measurably increases
 false positives.
 
+## Per-service configuration
+
+Real fleets are not homogeneous. A checkout API and a nightly batch worker
+should not share a threshold, and `criticalityWeight` only means anything if it
+can differ per service. The `services` block overrides any detector parameter
+for the services a rule matches:
+
+```json
+"services": [
+  { "match": "checkout-api", "name": "tier-1", "criticalityWeight": 3, "triggerThreshold": 2.5 },
+  { "match": "queue-*", "name": "queues", "metrics": ["queue_depth", "consumer_lag"] },
+  { "match": "batch-*", "name": "batch", "minSustain": 4, "triggerThreshold": 6 }
+]
+```
+
+Anything unspecified falls through to the global `detector` config, so a rule
+only states what differs.
+
+**Matching order is deliberate.** An exact service name always beats a
+wildcard, and among wildcards the first declared rule wins. Adding a broad `*`
+catch-all can therefore never silently override a specific service configured
+above it. Wildcards match only where placed: `api-*-eu` matches
+`api-checkout-eu` but not `api-checkout-us`.
+
+Overridable: `metrics`, `zThreshold`, `zThresholdPerMetric`, `minSustain`,
+`minSignals`, `triggerThreshold`, `criticalityWeight`, `sigmaFloorRatio`,
+`sigmaFloorAbs`, `baselineWindows`, `statistic`. Anything else is rejected at
+startup — including `intervalSeconds`, which is agent-wide by nature.
+
+`criticalityWeight` is the `W` in `R = mean_z × ln(1 + n) × W`. Raising it to 3
+makes a tier-1 service cross the trigger on drift that a default service would
+not, which is usually a better lever than lowering its threshold because it
+scales the whole score rather than moving one cliff edge.
+
+To confirm a rule is actually in effect, `GET /api/state` reports the matched
+profile per service and `serviceProfiles` lists every compiled rule:
+
+```json
+{ "service": "checkout-api", "profile": "tier-1", "R_score": 4.2 }
+```
+
+A `profile` of `null` means no rule matched and the global config applies.
+
 ## Tuning to your traffic
 
 Start with the defaults and one week of observation, then adjust:

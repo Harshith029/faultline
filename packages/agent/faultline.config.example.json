@@ -32,6 +32,11 @@
     }
   },
 
+  "services": [
+    { "match": "checkout-api", "name": "tier-1", "criticalityWeight": 3, "triggerThreshold": 2.5 },
+    { "match": "batch-*", "name": "batch", "minSustain": 4, "triggerThreshold": 6 }
+  ],
+
   "alerting": {
     "cooldownSeconds": 600,
     "resolveAfterWindows": 3,

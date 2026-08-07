@@ -1,4 +1,5 @@
 import { detectorParams } from './config.js'
+import { compileServiceRules, createParamsResolver } from './serviceConfig.js'
 import { createLogger } from './logger.js'
 import { createSource } from './sources/index.js'
 import { RollingDetector } from './detector.js'
@@ -18,8 +19,10 @@ export class FaultlineAgent {
 
     const ctx = { logger: this.logger, config }
     this.source = createSource(config.source, ctx)
+    this.serviceRules = compileServiceRules(config.services)
     this.detector = new RollingDetector({
       params: detectorParams(config),
+      resolveParams: createParamsResolver(detectorParams(config), this.serviceRules),
       historyWindows: config.detector.historyWindows,
       logger: this.logger,
     })
@@ -158,6 +161,9 @@ export class FaultlineAgent {
       const alert = alertStates.get(result.service)
       const base = {
         service: result.service,
+        // Which per-service override rule applied, so an operator can tell at a
+        // glance whether their config is actually in effect.
+        profile: result.profile ?? null,
         status: result.status,
         windowsBuffered: result.windowsBuffered,
         firing: alert?.status === 'firing',
@@ -187,6 +193,11 @@ export class FaultlineAgent {
       sourceState: this.source.state?.() ?? null,
       intervalSeconds: this.intervalSeconds,
       triggerThreshold: this.config.detector.triggerThreshold,
+      serviceProfiles: this.serviceRules.map((r) => ({
+        match: r.match,
+        name: r.name,
+        overrides: Object.keys(r.overrides),
+      })),
       ticks: this.ticks,
       collectErrors: this.collectErrors,
       consecutiveCollectErrors: this.consecutiveCollectErrors,
