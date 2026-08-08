@@ -41,7 +41,16 @@ export const DEFAULT_CONFIG = {
     auth: { tokenEnv: 'FAULTLINE_API_TOKEN', readOnlyTokenEnv: 'FAULTLINE_READ_TOKEN', allowAnonymousRead: false },
     tls: null,
   },
-  storage: { path: './data/faultline-state.json', maxIncidents: 200 },
+  storage: {
+    path: './data/faultline-state.json',
+    maxIncidents: 200,
+    // Resume detection after a restart if the saved state is no older than
+    // this. 0 disables resuming and always warms up fresh.
+    restoreMaxAgeSeconds: 900,
+    // How often detection state is written. Between snapshots a hard crash
+    // loses at most this many windows; a clean shutdown always saves.
+    snapshotEveryTicks: 10,
+  },
   logging: { level: 'info', pretty: false },
 }
 
@@ -70,6 +79,8 @@ const NUMERIC_RULES = {
   'alerting.resolveAfterWindows': { min: 1, integer: true },
   'server.port': { min: 0, max: 65535, integer: true },
   'storage.maxIncidents': { min: 1, integer: true },
+  'storage.restoreMaxAgeSeconds': { min: 0 },
+  'storage.snapshotEveryTicks': { min: 1, integer: true },
 }
 
 const KNOWN_SOURCES = ['synthetic', 'prometheus', 'http', 'cloudwatch']

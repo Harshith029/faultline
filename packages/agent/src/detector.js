@@ -109,6 +109,24 @@ export class RollingDetector {
     return results
   }
 
+  exportBuffers() {
+    return this.buffer.services().map((service) => ({ service, samples: this.buffer.get(service) }))
+  }
+
+  hydrateBuffers(entries = []) {
+    let restored = 0
+    for (const entry of entries) {
+      if (!entry?.service || !Array.isArray(entry.samples)) continue
+      for (const sample of entry.samples) {
+        if (sample && typeof sample === 'object') {
+          this.buffer.push(entry.service, sample)
+          restored += 1
+        }
+      }
+    }
+    return restored
+  }
+
   windowsFor(service) {
     return this.detections.get(service)?.detection.windows ?? []
   }

@@ -62,6 +62,11 @@
     },
     "tls": null
   },
-  "storage": { "path": "./data/faultline-state.json", "maxIncidents": 500 },
+  "storage": {
+    "path": "./data/faultline-state.json",
+    "maxIncidents": 500,
+    "restoreMaxAgeSeconds": 900,
+    "snapshotEveryTicks": 10
+  },
   "logging": { "level": "info", "pretty": false }
 }

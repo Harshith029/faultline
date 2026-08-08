@@ -306,7 +306,7 @@ than no agent:
   for: 5m
 ```
 
-## Persistence
+## Persistence and restarts
 
 Incidents are written to `storage.path` as JSON, atomically (temp file +
 rename) and debounced, so a crash mid-write cannot corrupt the file. History is
@@ -314,9 +314,36 @@ capped at `storage.maxIncidents`. On restart the file is reloaded; if it is
 missing or unreadable the agent starts with an empty history rather than
 failing to boot.
 
-Live detection state (the rolling buffer) is intentionally **not** persisted —
-after a restart each service warms up again rather than resuming from a
-baseline that may be hours stale.
+Detection state — the rolling buffers and the incident lifecycle — is persisted
+too, because otherwise every restart costs a full warm-up. At default settings
+that is twelve minutes with nothing watching, and a rolling deploy of the agent
+itself would blind your monitoring exactly when you are changing something.
+Worse, an incident in flight would re-open on the new process and page a second
+time.
+
+Restoring stale state would be its own hazard, so it is guarded by age:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `storage.restoreMaxAgeSeconds` | `900` | Resume only if the snapshot is newer than this. `0` disables resuming entirely. |
+| `storage.snapshotEveryTicks` | `10` | How often state is written mid-run. A clean shutdown always writes. |
+
+Telemetry from an hour ago describes a system that may no longer exist, so
+anything older than the window is discarded and the agent warms up honestly
+rather than scoring against a baseline it should not trust. Between periodic
+snapshots a hard crash loses at most `snapshotEveryTicks` windows; `SIGTERM`
+loses none.
+
+Startup says which happened:
+
+```
+INFO  state.restored    ageSeconds=8 services=3 samples=180
+INFO  state.warming_up  reason=stale
+```
+
+`GET /api/state` reports the same under `stateRestored`. Reasons are
+`disabled`, `no_saved_state`, `stale` and `unreadable_timestamp` — a corrupt
+snapshot never blocks startup.
 
 ## Deployment
 
@@ -352,6 +379,7 @@ deployments with different `source` scopes instead.
 |---|---|---|
 | `/health` returns 503 | 3+ consecutive collection failures | Check source reachability; `agent.collect_failed` logs carry the error |
 | Services stuck `warming_up` | Fewer samples than required | Confirm the source returns a stable `service` label every tick |
+| Warm-up after every restart | Snapshot older than the restore window | Raise `storage.restoreMaxAgeSeconds`, or check the state file is on a persistent volume |
 | `agent.tick_skipped` | Collection is slower than the interval | Raise `intervalSeconds` or narrow the queries |
 | Alerts on a quiet service | Baseline variance near zero | Set `sigmaFloorAbs` |
 | Long incident self-resolves while still broken | Incident absorbed into its rolling baseline | Raise `historyWindows` |

@@ -14,6 +14,7 @@ export class Store {
     this.logger = logger
     this.incidents = []
     this.silences = []
+    this.detectionState = null
     this.dirty = false
     this.timer = null
     this.startedAt = new Date().toISOString()
@@ -25,6 +26,7 @@ export class Store {
       const parsed = JSON.parse(contents)
       if (Array.isArray(parsed?.incidents)) this.incidents = parsed.incidents
       if (Array.isArray(parsed?.silences)) this.silences = parsed.silences
+      if (parsed?.detectionState) this.detectionState = parsed.detectionState
       this.logger?.info('store.loaded', { path: this.path, incidents: this.incidents.length })
     } catch (err) {
       if (err.code !== 'ENOENT') {
@@ -78,10 +80,11 @@ export class Store {
     this.dirty = false
     const payload = JSON.stringify(
       {
-        version: 2,
+        version: 3,
         updatedAt: new Date().toISOString(),
         incidents: this.incidents,
         silences: this.silences,
+        detectionState: this.detectionState,
       },
       null,
       2

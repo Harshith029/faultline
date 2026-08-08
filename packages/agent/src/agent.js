@@ -44,6 +44,47 @@ export class FaultlineAgent {
     this.latest = new Map()
   }
 
+  /**
+   * Restores the rolling buffers and incident lifecycle from disk.
+   *
+   * Without this, every restart costs a full warm-up — twelve minutes blind at
+   * default settings, during which a rolling deploy of the agent itself leaves
+   * nothing watching — and an incident in flight would re-open and page twice.
+   *
+   * The guard is staleness: telemetry from an hour ago describes a system that
+   * may no longer exist, so old state is discarded and the agent warms up
+   * honestly rather than scoring against a baseline it should not trust.
+   */
+  restoreDetectionState(nowMs = Date.now()) {
+    const maxAgeMs = (this.config.storage.restoreMaxAgeSeconds ?? 0) * 1000
+    if (maxAgeMs === 0) return { restored: false, reason: 'disabled' }
+
+    const state = this.store.detectionState
+    if (!state?.savedAt) return { restored: false, reason: 'no_saved_state' }
+
+    const savedAtMs = Date.parse(state.savedAt)
+    if (!Number.isFinite(savedAtMs)) return { restored: false, reason: 'unreadable_timestamp' }
+
+    const ageSeconds = Math.round((nowMs - savedAtMs) / 1000)
+    if (nowMs - savedAtMs > maxAgeMs) return { restored: false, reason: 'stale', ageSeconds }
+
+    return {
+      restored: true,
+      ageSeconds,
+      samples: this.detector.hydrateBuffers(state.buffers),
+      services: this.alerts.hydrate(state.alerts),
+    }
+  }
+
+  snapshotDetectionState() {
+    this.store.detectionState = {
+      savedAt: new Date().toISOString(),
+      buffers: this.detector.exportBuffers(),
+      alerts: this.alerts.exportState(),
+    }
+    this.store.markDirty()
+  }
+
   /** Mirrors runtime silences into the durable store. */
   syncSilences() {
     this.silences.prune()
@@ -81,6 +122,16 @@ export class FaultlineAgent {
     await this.store.load()
     this.silences.hydrate(this.store.silences)
     this.syncSilences()
+    this.stateRestore = this.restoreDetectionState()
+    if (this.stateRestore.restored) {
+      this.logger.info('state.restored', {
+        ageSeconds: this.stateRestore.ageSeconds,
+        services: this.stateRestore.services,
+        samples: this.stateRestore.samples,
+      })
+    } else {
+      this.logger.info('state.warming_up', { reason: this.stateRestore.reason })
+    }
     this.running = true
     this.startedAtMs = Date.now()
 
@@ -206,6 +257,10 @@ export class FaultlineAgent {
         }
       }
 
+      if (this.ticks % this.config.storage.snapshotEveryTicks === 0) {
+        this.snapshotDetectionState()
+      }
+
       this.logger.debug('agent.tick', { ticks: this.ticks, services: results.length })
     } finally {
       this.ticking = false
@@ -262,6 +317,7 @@ export class FaultlineAgent {
       consecutiveCollectErrors: this.consecutiveCollectErrors,
       lastCollectAt: this.lastCollectAt,
       services: services.sort((a, b) => a.service.localeCompare(b.service)),
+      stateRestored: this.stateRestore ?? { restored: false, reason: 'not_started' },
       silences: this.silences.list({ activeOnly: true }).length,
       incidents: this.store.stats(),
     }
@@ -278,6 +334,8 @@ export class FaultlineAgent {
       this.server = null
     }
     await this.source.close?.()
+    // A clean shutdown always saves, so a rolling deploy costs no warm-up.
+    if (this.ticks > 0) this.snapshotDetectionState()
     await this.store.close()
     this.logger.info('agent.stopped', { ticks: this.ticks })
   }

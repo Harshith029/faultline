@@ -186,6 +186,7 @@ Detection alone would page you every window. The agent adds the operational half
 | Cooldown after resolution | Stops a flapping service from paging all night |
 | Notifier failures are isolated | A dead webhook must not stop detection |
 | Source failures degrade `/health`, don't crash | Monitoring that dies during an outage is worthless |
+| Restarts resume instead of re-warming | A rolling deploy shouldn't blind you for 12 minutes, or re-page an incident you already know about |
 
 ---
 

@@ -42,6 +42,33 @@ export class AlertManager {
     }))
   }
 
+  /**
+   * Full lifecycle state for persistence. Restoring this is what stops a
+   * restart mid-incident from re-opening it and paging a second time.
+   */
+  exportState() {
+    return [...this.states.entries()].map(([service, s]) => ({
+      service,
+      status: s.status,
+      incident: s.incident,
+      clearStreak: s.clearStreak,
+      lastResolvedAt: s.lastResolvedAt,
+    }))
+  }
+
+  hydrate(entries = []) {
+    for (const entry of entries) {
+      if (!entry?.service) continue
+      this.states.set(entry.service, {
+        status: entry.status === 'firing' ? 'firing' : 'ok',
+        incident: entry.incident ?? null,
+        clearStreak: Number.isInteger(entry.clearStreak) ? entry.clearStreak : 0,
+        lastResolvedAt: Number.isFinite(entry.lastResolvedAt) ? entry.lastResolvedAt : null,
+      })
+    }
+    return this.states.size
+  }
+
   evaluate({ service, evaluation, nowMs = Date.now() }) {
     const state = this.stateFor(service)
     const at = new Date(nowMs).toISOString()
