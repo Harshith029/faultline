@@ -1,31 +1,56 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="560" height="140" viewBox="0 0 560 140" role="img" aria-label="FAULTLINE">
   <defs>
-    <linearGradient id="drift" x1="0" y1="1" x2="1" y2="0">
+    <linearGradient id="l-word" gradientUnits="userSpaceOnUse" x1="140" y1="0" x2="378.68" y2="0">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="45%" stop-color="#818CF8"/>
+      <stop offset="100%" stop-color="#F43F5E"/>
+    </linearGradient>
+    <linearGradient id="l-drift" x1="0" y1="1" x2="1" y2="0">
       <stop offset="0%" stop-color="#38BDF8"/>
       <stop offset="55%" stop-color="#8B5CF6"/>
       <stop offset="100%" stop-color="#F43F5E"/>
     </linearGradient>
-    <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="l-plate" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#141A2A"/>
       <stop offset="100%" stop-color="#0B0F1A"/>
     </linearGradient>
   </defs>
 
-  <!-- Self-contained dark card so the lockup reads on both GitHub themes. -->
   <rect width="560" height="140" rx="22" fill="#0B0F1A"/>
-  <rect x="10" y="18" width="104" height="104" rx="26" fill="url(#plate)" stroke="#1E293B" stroke-width="2"/>
-
-  <!-- healthy baseline -->
+  <rect x="10" y="18" width="104" height="104" rx="26" fill="url(#l-plate)" stroke="#1E293B" stroke-width="2"/>
   <path d="M26 86 H50" stroke="#334155" stroke-width="3" stroke-linecap="round"/>
-  <!-- drift rising into the fault -->
   <path d="M50 86 L62 80 L70 70 L78 52 L86 30"
-        fill="none" stroke="url(#drift)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- the fault line: where detection fires -->
+        fill="none" stroke="url(#l-drift)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M70 24 V116" stroke="#F43F5E" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="6 7" opacity="0.85"/>
   <circle cx="70" cy="70" r="6.5" fill="#0B0F1A" stroke="#F43F5E" stroke-width="3"/>
 
-  <text x="140" y="74" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif"
-        font-size="46" font-weight="700" letter-spacing="7" fill="#F8FAFC">FAULTLINE</text>
-  <text x="143" y="102" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif"
-        font-size="15" font-weight="500" letter-spacing="2.6" fill="#64748B">CASCADE FAILURE DETECTION</text>
+  <g transform="translate(140 40) scale(0.34)" fill="url(#l-word)">
+    <rect x="0" y="0" width="22" height="100"/>
+    <rect x="0" y="0" width="66" height="22"/>
+    <rect x="0" y="39" width="56" height="20"/>
+    <rect x="82" y="0" width="22" height="100"/>
+    <rect x="134" y="0" width="22" height="100"/>
+    <rect x="82" y="0" width="74" height="22"/>
+    <rect x="104" y="44" width="30" height="20"/>
+    <rect x="172" y="0" width="22" height="100"/>
+    <rect x="224" y="0" width="22" height="100"/>
+    <rect x="172" y="78" width="74" height="22"/>
+    <rect x="262" y="0" width="22" height="100"/>
+    <rect x="262" y="78" width="62" height="22"/>
+    <rect x="340" y="0" width="74" height="22"/>
+    <rect x="366" y="0" width="22" height="100"/>
+    <rect x="430" y="0" width="22" height="100"/>
+    <rect x="430" y="78" width="62" height="22"/>
+    <rect x="508" y="0" width="22" height="100"/>
+    <rect x="546" y="0" width="22" height="100"/>
+    <rect x="598" y="0" width="22" height="100"/>
+    <polygon points="568,0 590,0 620,100 598,100"/>
+    <rect x="636" y="0" width="22" height="100"/>
+    <rect x="636" y="0" width="66" height="22"/>
+    <rect x="636" y="39" width="56" height="20"/>
+    <rect x="636" y="78" width="66" height="22"/>
+  </g>
+
+  <text x="142" y="102" font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif"
+        font-size="13" font-weight="500" letter-spacing="2.4" fill="#64748B">CASCADE FAILURE DETECTION</text>
 </svg>
