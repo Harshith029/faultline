@@ -103,7 +103,7 @@ export default function LandingPage({ onLaunch }) {
         <section className="flex flex-col items-center pb-20 pt-16 text-center sm:pt-24">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 text-xs text-slate-300">
             <span className="status-pulse h-2 w-2 rounded-full bg-sky-400" />
-            AWS Builder Center AIdeas Challenge — Top 1000 Semi-Finalist
+            AWS Builder Center AIdeas Challenge — Top 300 Finalist
           </div>
 
           <h1 className="mt-8 max-w-4xl text-4xl font-semibold leading-tight tracking-tight text-white sm:text-6xl">
