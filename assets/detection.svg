@@ -1,80 +1,95 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="900" height="420" viewBox="0 0 900 420" role="img"
-     aria-label="Three telemetry signals drifting upward together; FAULTLINE fires at window 8, three windows before a static SLO alert at window 11">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="480" viewBox="0 0 1000 480" role="img"
+     aria-label="Three telemetry signals drift upward together. FAULTLINE detects the cascade at window 8; a static SLO alert would not fire until window 11, three windows later.">
   <defs>
     <linearGradient id="d-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#111827"/>
-      <stop offset="100%" stop-color="#0B0F1A"/>
+      <stop offset="0%" stop-color="#0F1626"/>
+      <stop offset="100%" stop-color="#080B12"/>
     </linearGradient>
   </defs>
 
-  <rect width="900" height="420" rx="18" fill="url(#d-bg)" stroke="#1E293B" stroke-width="2"/>
+  <rect width="1000" height="480" rx="10" fill="url(#d-bg)" stroke="#1E293B" stroke-width="2"/>
 
-  <text x="40" y="46" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="19" font-weight="700" fill="#F8FAFC">
+  <!-- ── header band ───────────────────────────────────────── -->
+  <text x="40" y="46" font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="21" font-weight="700" fill="#F8FAFC">
     Convergence is the signal
   </text>
-  <text x="40" y="70" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="13" fill="#94A3B8">
-    Three metrics drift together. Detection fires while there is still time to act.
+  <text x="40" y="70" font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="13" fill="#94A3B8">
+    One metric spiking is noise. Three drifting together is a cascade forming.
   </text>
 
-  <!-- grid -->
-  <g stroke="#1E293B" stroke-width="1">
-    <line x1="80" y1="340" x2="820" y2="340"/>
-    <line x1="80" y1="90" x2="80" y2="340"/>
+  <g font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="12">
+    <rect x="628" y="40" width="24" height="4" rx="2" fill="#38BDF8"/>
+    <text x="660" y="48" fill="#CBD5E1">p99 latency</text>
+    <rect x="628" y="62" width="24" height="4" rx="2" fill="#8B5CF6"/>
+    <text x="660" y="70" fill="#CBD5E1">retry rate</text>
+    <rect x="800" y="40" width="24" height="4" rx="2" fill="#F43F5E"/>
+    <text x="832" y="48" fill="#CBD5E1">error rate</text>
+    <rect x="800" y="62" width="24" height="4" rx="2" fill="#F59E0B" opacity="0.9"/>
+    <text x="832" y="70" fill="#CBD5E1">2σ threshold</text>
   </g>
 
-  <!-- qualification threshold -->
-  <line x1="80" y1="256.7" x2="820" y2="256.7" stroke="#F59E0B" stroke-width="1.5" stroke-dasharray="6 6" opacity="0.8"/>
-  <text x="826" y="261" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#F59E0B">z = 2σ</text>
+  <!-- ── callout band: labels live here, never over the data ── -->
+  <g font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif">
+    <rect x="512" y="92" width="194" height="40" rx="8" fill="#082F49" stroke="#38BDF8" stroke-width="1.5"/>
+    <text x="609" y="109" text-anchor="middle" font-size="12.5" font-weight="700" fill="#7DD3FC">FAULTLINE DETECTS</text>
+    <text x="609" y="125" text-anchor="middle" font-size="11.5" fill="#BAE6FD">W8 · R 3.96 · 2 signals</text>
 
-  <!-- lead-time band -->
-  <rect x="538.2" y="90" width="196.3" height="250" fill="#38BDF8" opacity="0.07"/>
+    <rect x="744" y="92" width="180" height="40" rx="8" fill="#3F0D18" stroke="#F43F5E" stroke-width="1.5"/>
+    <text x="834" y="109" text-anchor="middle" font-size="12.5" font-weight="700" fill="#FDA4AF">STATIC SLO FIRES</text>
+    <text x="834" y="125" text-anchor="middle" font-size="11.5" fill="#FECDD3">W11 · already failing</text>
+  </g>
+  <path d="M609.1 132 V140" stroke="#38BDF8" stroke-width="1.5"/>
+  <path d="M827.3 132 V140" stroke="#F43F5E" stroke-width="1.5"/>
 
-  <!-- detection marker -->
-  <line x1="538.2" y1="82" x2="538.2" y2="348" stroke="#38BDF8" stroke-width="2.5"/>
-  <circle cx="538.2" cy="82" r="4" fill="#38BDF8"/>
-  <text x="546" y="108" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#38BDF8">FAULTLINE fires</text>
-  <text x="546" y="125" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#7DD3FC">W8 · R = 3.96 · 2 signals</text>
+  <!-- ── plot band ─────────────────────────────────────────── -->
+  <g stroke="#182338" stroke-width="1">
+    <line x1="100" y1="140" x2="900" y2="140"/>
+    <line x1="100" y1="220" x2="900" y2="220"/>
+    <line x1="100" y1="300" x2="900" y2="300"/>
+    <line x1="100" y1="380" x2="900" y2="380"/>
+  </g>
 
-  <!-- SLO marker -->
-  <line x1="734.5" y1="82" x2="734.5" y2="348" stroke="#F43F5E" stroke-width="2.5" stroke-dasharray="5 5"/>
-  <circle cx="734.5" cy="82" r="4" fill="#F43F5E"/>
-  <text x="742" y="152" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" fill="#F43F5E">Static SLO</text>
-  <text x="742" y="169" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" fill="#FDA4AF">W11 · already failing</text>
+  <rect x="609.1" y="140" width="218.2" height="240" fill="#38BDF8" opacity="0.06"/>
 
-  <!-- lead time bracket -->
-  <path d="M538.2 366 V374 H734.5 V366" fill="none" stroke="#38BDF8" stroke-width="1.5"/>
-  <text x="636" y="392" text-anchor="middle" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#38BDF8">
+  <line x1="100" y1="300" x2="900" y2="300" stroke="#F59E0B" stroke-width="1.5" stroke-dasharray="6 6" opacity="0.85"/>
+
+  <line x1="609.1" y1="140" x2="609.1" y2="380" stroke="#38BDF8" stroke-width="2.5"/>
+  <line x1="827.3" y1="140" x2="827.3" y2="380" stroke="#F43F5E" stroke-width="2.5" stroke-dasharray="6 5"/>
+
+  <polyline fill="none" stroke="#38BDF8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+    points="100,331.8 172.7,367.0 245.5,313.0 318.2,348.2 390.9,293.0 463.6,282.4 536.4,281.2 609.1,263.6 681.8,250.6 754.5,229.4 827.3,196.4 900,149.4"/>
+  <polyline fill="none" stroke="#8B5CF6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+    points="100,350.0 172.7,332.0 245.5,365.8 318.2,312.2 390.9,320.2 463.6,308.2 536.4,292.4 609.1,272.6 681.8,260.6 754.5,244.8 827.3,220.8 900,181.2"/>
+  <polyline fill="none" stroke="#F43F5E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+    points="100,326.2 172.7,356.0 245.5,314.8 318.2,362.8 390.9,321.8 463.6,314.8 536.4,305.8 609.1,287.4 681.8,264.6 754.5,244.0 827.3,216.6 900,166.2"/>
+
+  <circle cx="609.1" cy="263.6" r="5" fill="#080B12" stroke="#38BDF8" stroke-width="3"/>
+  <circle cx="609.1" cy="272.6" r="5" fill="#080B12" stroke="#8B5CF6" stroke-width="3"/>
+
+  <!-- ── axis band ─────────────────────────────────────────── -->
+  <g font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="11" fill="#64748B">
+    <text x="86" y="144" text-anchor="end">10σ</text>
+    <text x="86" y="224" text-anchor="end">6σ</text>
+    <text x="86" y="304" text-anchor="end">2σ</text>
+    <text x="86" y="384" text-anchor="end">−2σ</text>
+
+    <text x="100" y="402" text-anchor="middle">W1</text>
+    <text x="245.5" y="402" text-anchor="middle">W3</text>
+    <text x="390.9" y="402" text-anchor="middle">W5</text>
+    <text x="536.4" y="402" text-anchor="middle">W7</text>
+    <text x="609.1" y="402" text-anchor="middle" fill="#7DD3FC" font-weight="700">W8</text>
+    <text x="754.5" y="402" text-anchor="middle">W10</text>
+    <text x="827.3" y="402" text-anchor="middle" fill="#FDA4AF" font-weight="700">W11</text>
+    <text x="900" y="402" text-anchor="middle">W12</text>
+  </g>
+
+  <!-- ── lead-time band ────────────────────────────────────── -->
+  <path d="M609.1 424 V436 H827.3 V424" fill="none" stroke="#38BDF8" stroke-width="1.5"/>
+  <text x="718" y="458" text-anchor="middle"
+        font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#38BDF8">
     3 windows of lead time
   </text>
-
-  <!-- p99 latency -->
-  <polyline fill="none" stroke="#38BDF8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
-    points="80,289.8 145.5,326.5 210.9,270.2 276.4,306.9 341.8,249.4 407.3,238.4 472.7,237.1 538.2,218.8 603.6,205.2 669.1,183.2 734.5,148.8 800,99.8"/>
-  <!-- retry rate -->
-  <polyline fill="none" stroke="#8B5CF6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
-    points="80,308.8 145.5,290.0 210.9,325.2 276.4,269.4 341.8,277.7 407.3,265.2 472.7,248.8 538.2,228.1 603.6,215.6 669.1,199.2 734.5,174.2 800,132.9"/>
-  <!-- error rate -->
-  <polyline fill="none" stroke="#F43F5E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
-    points="80,284.0 145.5,315.0 210.9,272.1 276.4,322.1 341.8,279.4 407.3,272.1 472.7,262.7 538.2,243.6 603.6,219.8 669.1,198.4 734.5,169.8 800,117.3"/>
-
-  <!-- axis labels -->
-  <g font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="10.5" fill="#64748B">
-    <text x="80" y="358" text-anchor="middle">W1</text>
-    <text x="341.8" y="358" text-anchor="middle">W5</text>
-    <text x="538.2" y="358" text-anchor="middle">W8</text>
-    <text x="734.5" y="358" text-anchor="middle">W11</text>
-    <text x="800" y="358" text-anchor="middle">W12</text>
-    <text x="52" y="345">-2σ</text>
-    <text x="52" y="95">10σ</text>
-  </g>
-
-  <!-- legend -->
-  <g font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="11.5">
-    <rect x="596" y="34" width="22" height="3.5" rx="1.75" fill="#38BDF8"/>
-    <text x="626" y="41" fill="#CBD5E1">p99 latency</text>
-    <rect x="706" y="34" width="22" height="3.5" rx="1.75" fill="#8B5CF6"/>
-    <text x="736" y="41" fill="#CBD5E1">retries</text>
-    <rect x="796" y="34" width="22" height="3.5" rx="1.75" fill="#F43F5E"/>
-    <text x="826" y="41" fill="#CBD5E1">errors</text>
-  </g>
+  <text x="40" y="452" font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="11.5" fill="#64748B">
+    Reference scenario · real engine output · npm run verify:engine
+  </text>
 </svg>

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="FAULTLINE" width="440">
+  <img src="assets/banner.svg" alt="FAULTLINE — cascade failure detection" width="100%">
 </p>
 
 <h3 align="center">Catch cascade failures while there is still time to act</h3>

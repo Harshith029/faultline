@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-label="FAULTLINE — cascade failure detection">
+  <defs>
+    <linearGradient id="b-word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="40%" stop-color="#818CF8"/>
+      <stop offset="70%" stop-color="#C084FC"/>
+      <stop offset="100%" stop-color="#F43F5E"/>
+    </linearGradient>
+    <linearGradient id="b-line" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="60%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#F43F5E"/>
+    </linearGradient>
+    <pattern id="b-grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0 H0 V40" fill="none" stroke="#151E33" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="320" fill="#080B12"/>
+  <rect width="1200" height="320" fill="url(#b-grid)" opacity="0.55"/>
+  <rect x="1.5" y="1.5" width="1197" height="317" rx="5" fill="none" stroke="#1E293B" stroke-width="3"/>
+
+  <!-- Type band: y 40-190. Nothing else is drawn here. -->
+  <g font-family="Impact, 'Arial Black', 'Segoe UI', Helvetica, sans-serif" font-size="128" font-weight="900" letter-spacing="11">
+    <text x="605" y="139" text-anchor="middle" fill="#2A1F5C" opacity="0.9">FAULTLINE</text>
+    <text x="600" y="134" text-anchor="middle" fill="url(#b-word)" stroke="#080B12" stroke-width="1.5">FAULTLINE</text>
+  </g>
+
+  <text x="600" y="182" text-anchor="middle"
+        font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="18" font-weight="600" letter-spacing="8" fill="#94A3B8">
+    CASCADE FAILURE DETECTION
+  </text>
+
+  <!-- Motif band: y 205-300. Strictly below the type. -->
+  <g>
+    <line x1="150" y1="286" x2="1050" y2="286" stroke="#1E293B" stroke-width="1.5"/>
+    <path d="M150 272 H430 L480 270 L530 267 L580 269 L630 263 L670 257 L720 240 L780 230 L840 224 L900 218 L960 214 L1050 210"
+          fill="none" stroke="url(#b-line)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <line x1="720" y1="207" x2="720" y2="292" stroke="#F43F5E" stroke-width="2" stroke-dasharray="7 8" opacity="0.75"/>
+    <circle cx="720" cy="240" r="8" fill="#080B12" stroke="#F43F5E" stroke-width="3.5"/>
+
+    <g font-family="'Segoe UI', Inter, Helvetica, Arial, sans-serif" font-size="12.5">
+      <text x="150" y="308" fill="#475569">nominal</text>
+      <text x="736" y="308" font-weight="700" fill="#F87171">detection fires here</text>
+      <text x="1050" y="204" text-anchor="end" fill="#64748B">outage</text>
+    </g>
+  </g>
+</svg>
