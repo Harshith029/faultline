@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360" role="img"
+     aria-label="Architecture: telemetry sources feed the agent, which buffers windows, runs the detection engine, manages incident lifecycle, and emits alerts, an HTTP API and Prometheus metrics">
+  <defs>
+    <linearGradient id="a-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111827"/>
+      <stop offset="100%" stop-color="#0B0F1A"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
+      <path d="M0,0 L0,9 L9,4.5 z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <rect width="900" height="360" rx="18" fill="url(#a-bg)" stroke="#1E293B" stroke-width="2"/>
+
+  <text x="40" y="42" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#F8FAFC">
+    How the agent runs
+  </text>
+
+  <!-- sources -->
+  <text x="40" y="80" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1.6" fill="#64748B">SOURCES</text>
+  <g font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" fill="#CBD5E1">
+    <rect x="40" y="94" width="150" height="34" rx="9" fill="#0F172A" stroke="#334155"/><text x="60" y="116">Prometheus</text>
+    <rect x="40" y="138" width="150" height="34" rx="9" fill="#0F172A" stroke="#334155"/><text x="60" y="160">CloudWatch</text>
+    <rect x="40" y="182" width="150" height="34" rx="9" fill="#0F172A" stroke="#334155"/><text x="60" y="204">HTTP / JSON</text>
+    <rect x="40" y="226" width="150" height="34" rx="9" fill="#0F172A" stroke="#334155"/><text x="60" y="248">Synthetic</text>
+  </g>
+
+  <path d="M196 177 H244" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- agent -->
+  <rect x="250" y="76" width="380" height="216" rx="14" fill="#0F172A" stroke="#38BDF8" stroke-opacity="0.35" stroke-width="2"/>
+  <text x="270" y="102" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="700" letter-spacing="1.4" fill="#38BDF8">FAULTLINE AGENT</text>
+
+  <g font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#E2E8F0">
+    <rect x="270" y="116" width="156" height="52" rx="10" fill="#111C33" stroke="#334155"/>
+    <text x="286" y="140">Rolling buffer</text>
+    <text x="286" y="157" font-size="10.5" fill="#94A3B8">per service, N windows</text>
+
+    <rect x="454" y="116" width="156" height="52" rx="10" fill="#111C33" stroke="#334155"/>
+    <text x="470" y="140">Detection engine</text>
+    <text x="470" y="157" font-size="10.5" fill="#94A3B8">z → qualify → R score</text>
+
+    <rect x="270" y="184" width="156" height="52" rx="10" fill="#111C33" stroke="#334155"/>
+    <text x="286" y="208">Incident lifecycle</text>
+    <text x="286" y="225" font-size="10.5" fill="#94A3B8">dedup · resolve · cooldown</text>
+
+    <rect x="454" y="184" width="156" height="52" rx="10" fill="#111C33" stroke="#334155"/>
+    <text x="470" y="208">Silences</text>
+    <text x="470" y="225" font-size="10.5" fill="#94A3B8">maintenance windows</text>
+  </g>
+
+  <path d="M432 142 H448" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M532 168 V176 H348 V182" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <text x="270" y="268" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="10.5" fill="#64748B">
+    zero runtime dependencies · state survives restarts
+  </text>
+
+  <path d="M636 177 H684" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- outputs -->
+  <text x="690" y="80" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1.6" fill="#64748B">OUTPUTS</text>
+  <g font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5" fill="#CBD5E1">
+    <rect x="690" y="94" width="170" height="34" rx="9" fill="#0F172A" stroke="#334155"/><text x="710" y="116">Webhook / Slack</text>
+    <rect x="690" y="138" width="170" height="34" rx="9" fill="#0F172A" stroke="#334155"/><text x="710" y="160">stdout · JSONL</text>
+    <rect x="690" y="182" width="170" height="34" rx="9" fill="#0F172A" stroke="#334155"/><text x="710" y="204">HTTP API</text>
+    <rect x="690" y="226" width="170" height="34" rx="9" fill="#0F172A" stroke="#334155"/><text x="710" y="248">/metrics</text>
+  </g>
+</svg>

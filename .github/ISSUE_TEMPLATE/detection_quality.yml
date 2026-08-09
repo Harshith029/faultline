@@ -1,0 +1,58 @@
+name: Detection quality
+description: A missed incident, or an alert that should not have fired
+labels: [detection]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Detection issues are the most valuable reports this project receives,
+        and the hardest to act on without data. A CSV of the telemetry involved
+        makes the difference between a guess and a fix — the engine will run on
+        it directly.
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - Missed a real incident (false negative)
+        - Alerted when it should not have (false positive)
+        - Fired later than expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: telemetry
+    attributes:
+      label: Telemetry
+      description: >
+        CSV with a header row and one row per window, e.g.
+        `window,p99_latency,retry_rate,error_rate`. Twenty or more windows
+        spanning the event is ideal. Values may be rescaled if they are
+        sensitive, as long as the shape is preserved.
+      render: csv
+    validations:
+      required: true
+
+  - type: textarea
+    id: expectation
+    attributes:
+      label: What should have happened
+      placeholder: Should have fired around window 14, when retries began climbing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Detector configuration
+      description: Your `detector` block and any matching `services` override.
+      render: json
+
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before filing
+      options:
+        - label: I read the tuning section in docs/AGENT.md
+        - label: I set `sigmaFloorAbs` (the most common cause of false positives on quiet services)

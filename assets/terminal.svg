@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="330" viewBox="0 0 900 330" role="img"
+     aria-label="Terminal output: the agent starts, detects a cascade on checkout-api at R=4.12 with two converging signals, then resolves it">
+  <rect width="900" height="330" rx="14" fill="#0B0F1A" stroke="#1E293B" stroke-width="2"/>
+  <rect x="2" y="2" width="896" height="40" rx="12" fill="#111827"/>
+  <circle cx="28" cy="22" r="6" fill="#F43F5E"/>
+  <circle cx="50" cy="22" r="6" fill="#F59E0B"/>
+  <circle cx="72" cy="22" r="6" fill="#34D399"/>
+  <text x="100" y="27" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" fill="#64748B">
+    npm run agent:demo
+  </text>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5">
+    <text x="26" y="74"><tspan fill="#38BDF8">INFO </tspan><tspan fill="#94A3B8"> server.listening </tspan><tspan fill="#E2E8F0">url=http://127.0.0.1:8787</tspan></text>
+    <text x="26" y="98"><tspan fill="#38BDF8">INFO </tspan><tspan fill="#94A3B8"> agent.started </tspan><tspan fill="#E2E8F0">source=synthetic intervalSeconds=1 triggerThreshold=3</tspan></text>
+    <text x="26" y="122"><tspan fill="#64748B">…collecting telemetry for checkout-api, payments, inventory</tspan></text>
+
+    <text x="26" y="158"><tspan fill="#F59E0B">WARN </tspan><tspan fill="#94A3B8"> incident.opened </tspan><tspan fill="#E2E8F0">service=checkout-api R=4.12 signals=2</tspan></text>
+    <text x="26" y="182"><tspan fill="#F59E0B">WARN </tspan><tspan fill="#FDE68A"> [FAULTLINE] WARNING checkout-api — cascade detected.</tspan></text>
+    <text x="46" y="204"><tspan fill="#FDE68A">R=4.12 (threshold crossed) with 2 converging signal(s):</tspan></text>
+    <text x="46" y="226"><tspan fill="#FDE68A">retry_rate z=5.1, error_rate z=2.4</tspan></text>
+
+    <text x="26" y="262"><tspan fill="#38BDF8">INFO </tspan><tspan fill="#94A3B8"> incident.resolved </tspan><tspan fill="#E2E8F0">windowsFiring=15 peakR=8.60</tspan></text>
+    <text x="26" y="286"><tspan fill="#38BDF8">INFO </tspan><tspan fill="#86EFAC"> [FAULTLINE] RESOLVED checkout-api — risk cleared after 15 windows, 17s.</tspan></text>
+    <text x="26" y="312"><tspan fill="#475569">$ </tspan><tspan fill="#E2E8F0">curl localhost:8787/api/incidents</tspan><tspan fill="#475569"> ▎</tspan></text>
+  </g>
+</svg>

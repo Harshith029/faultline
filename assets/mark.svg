@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="FAULTLINE mark">
+  <defs>
+    <linearGradient id="m-drift" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="55%" stop-color="#8B5CF6"/>
+      <stop offset="100%" stop-color="#F43F5E"/>
+    </linearGradient>
+    <linearGradient id="m-plate" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#141A2A"/>
+      <stop offset="100%" stop-color="#0B0F1A"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="30" fill="url(#m-plate)" stroke="#1E293B" stroke-width="2"/>
+  <path d="M22 92 H52" stroke="#334155" stroke-width="4" stroke-linecap="round"/>
+  <path d="M52 92 L66 84 L76 72 L86 50 L96 26"
+        fill="none" stroke="url(#m-drift)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M76 18 V112" stroke="#F43F5E" stroke-width="3" stroke-linecap="round" stroke-dasharray="7 8" opacity="0.85"/>
+  <circle cx="76" cy="72" r="7.5" fill="#0B0F1A" stroke="#F43F5E" stroke-width="3.5"/>
+</svg>

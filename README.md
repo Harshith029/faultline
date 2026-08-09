@@ -1,12 +1,32 @@
-# FAULTLINE
+<p align="center">
+  <img src="assets/logo.svg" alt="FAULTLINE" width="440">
+</p>
 
-### Catch cascade failures while there is still time to act
+<h3 align="center">Catch cascade failures while there is still time to act</h3>
 
-[![CI](https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg)](https://github.com/Harshith029/faultline/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Zero dependencies](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)](packages/agent/package.json)
+<p align="center">
+  <a href="https://github.com/Harshith029/faultline/actions/workflows/ci.yml"><img src="https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
+  <a href="packages/agent/package.json"><img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg" alt="Zero runtime dependencies"></a>
+  <img src="https://img.shields.io/badge/tests-169%20passing-brightgreen.svg" alt="169 tests passing">
+  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933.svg" alt="Node 20 or newer">
+</p>
 
-Static thresholds fire when you are already failing. FAULTLINE watches how latency, retries, and errors **drift together over time** and opens an incident while the failure is still forming — typically several windows before an SLO alert would trip.
+<p align="center">
+  <a href="#see-it-detect-a-real-cascade-in-30-seconds">Quickstart</a> ·
+  <a href="#point-it-at-your-own-metrics">Configure</a> ·
+  <a href="#how-detection-works">How it works</a> ·
+  <a href="#does-it-actually-work">Benchmarks</a> ·
+  <a href="docs/AGENT.md">Operations</a>
+</p>
+
+---
+
+Static thresholds fire when you are already failing. FAULTLINE watches how latency, retries, and errors **drift together over time** and opens an incident while the failure is still forming — several windows before an SLO alert would trip.
+
+<p align="center">
+  <img src="assets/detection.svg" alt="Three telemetry signals drifting upward together. FAULTLINE fires at window 8; a static SLO alert would not fire until window 11." width="900">
+</p>
 
 It is a real monitoring agent, not a dashboard: it runs continuously, pulls metrics from Prometheus / CloudWatch / any HTTP endpoint, scores cascade risk with auditable math, manages incident lifecycle with dedup and cooldown, and alerts your webhook.
 
@@ -25,13 +45,9 @@ npm run agent:demo
 
 The agent starts, streams synthetic telemetry for three services, and ~15 seconds in a cascade begins on `checkout-api`. You will see it caught live:
 
-```
-INFO  agent.started source=synthetic intervalSeconds=1 triggerThreshold=3
-WARN  incident.opened incident=inc_checkout-api_ms1m52 service=checkout-api R=3.71 signals=2
-WARN  [FAULTLINE] WARNING checkout-api — cascade detected. R=3.71 (threshold crossed)
-      with 2 converging signal(s): p99_latency z=3.6, retry_rate z=3.9
-INFO  incident.resolved incident=inc_checkout-api_ms1m52 windowsFiring=14 peakR=8.24
-```
+<p align="center">
+  <img src="assets/terminal.svg" alt="Terminal output showing the agent starting, detecting a cascade on checkout-api at R=4.12 with two converging signals, then resolving it." width="900">
+</p>
 
 While it runs, the agent is serving a real API:
 
@@ -188,6 +204,10 @@ Detection alone would page you every window. The agent adds the operational half
 | Source failures degrade `/health`, don't crash | Monitoring that dies during an outage is worthless |
 | Restarts resume instead of re-warming | A rolling deploy shouldn't blind you for 12 minutes, or re-page an incident you already know about |
 
+<p align="center">
+  <img src="assets/architecture.svg" alt="Telemetry sources feed the agent, which buffers windows per service, runs the detection engine, manages incident lifecycle and silences, and emits alerts, an HTTP API and Prometheus metrics." width="900">
+</p>
+
 ---
 
 ## Does it actually work?
@@ -319,10 +339,34 @@ Three refinements of *how the numbers are computed* changed nothing, which is it
 
 ## Contributing
 
-Issues and PRs welcome. One invariant: **detection stays deterministic and auditable — AI may explain, never decide.** Run `npm test` before submitting.
+Issues, questions and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, repo layout, and the bar for detection changes.
+
+One invariant: **detection stays deterministic and auditable — AI may explain a detection, never cause or suppress one.**
+
+Detection-quality reports are the most valuable thing you can file. There is an [issue template](.github/ISSUE_TEMPLATE/detection_quality.yml) for them; attaching a CSV of the telemetry means the engine can be run on your data directly.
+
+## Security
+
+Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md), which also documents the attack surface, a hardening checklist, and the known limitations.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/AGENT.md](docs/AGENT.md) | Operating the agent: tuning, silences, auth, restarts, failure modes |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit and why they are built this way |
+| [docs/BACKTEST.md](docs/BACKTEST.md) | Real-telemetry results, protocol, and three rejected ideas |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup and the bar for detection changes |
+| [SECURITY.md](SECURITY.md) | Reporting, attack surface, hardening |
 
 ## License
 
 [MIT](LICENSE) — use it, fork it, ship it.
 
-Built by **Team Progsolve**. Recognized as a Top 1000 Semi-Finalist in the AWS Builder Center AIdeas Challenge.
+<p align="center">
+  <img src="assets/mark.svg" alt="" width="48">
+</p>
+
+<p align="center">
+  Built by <b>Team Progsolve</b> · Top 1000 Semi-Finalist, AWS Builder Center AIdeas Challenge
+</p>
