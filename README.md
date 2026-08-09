@@ -368,5 +368,5 @@ Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY
 </p>
 
 <p align="center">
-  Built by <b>Team Progsolve</b> · Top 1000 Semi-Finalist, AWS Builder Center AIdeas Challenge
+  Built by <b>Pali Krishna Harshith</b> · Top 300 Finalist, AWS Builder Center AIdeas Challenge
 </p>
