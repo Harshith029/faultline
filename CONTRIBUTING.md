@@ -22,6 +22,16 @@ npm run agent:demo       # watch the agent detect a live synthetic cascade
 npm run build            # build the optional dashboard
 ```
 
+Brand assets are generated, not hand-edited:
+
+```bash
+node scripts/buildWordmark.mjs   # rewrites assets/banner.svg and assets/logo.svg
+```
+
+The wordmark is drawn as geometric paths rather than text so it renders
+identically with no font installed. Change the glyph grid in the script and
+re-run it; editing the generated SVGs directly will be overwritten.
+
 ## Repository layout
 
 ```
