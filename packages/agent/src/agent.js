@@ -63,6 +63,11 @@ export class FaultlineAgent {
     this.ticking = false
     // Set for the lifetime of shutdown; also the idempotency guard for stop().
     this.stopping = null
+    // Resolves the moment stop() is called, so a start() awaiting a wedged
+    // first collection can give up instead of hanging on it forever.
+    this.stopRequested = new Promise((resolve) => {
+      this.signalStopRequested = resolve
+    })
     this.tickDone = null
     this.ticks = 0
     this.collectErrors = 0
@@ -260,7 +265,15 @@ export class FaultlineAgent {
       triggerThreshold: this.config.detector.triggerThreshold,
     })
 
-    await this.tick()
+    // The first collection is awaited so a caller can rely on one tick having
+    // happened once start() resolves. It is raced against shutdown because a
+    // wedged source would otherwise leave this promise pending forever, even
+    // after stop() abandoned the tick — hanging any embedder that awaits
+    // start(), and leaving the process with an unsettled promise.
+    await Promise.race([this.tick(), this.stopRequested])
+
+    if (this.stopping) return this
+
     this.timer = setInterval(() => {
       this.tick().catch((err) => this.logger.error('agent.tick_failed', { message: err.message }))
     }, this.intervalSeconds * 1000)
@@ -466,6 +479,7 @@ export class FaultlineAgent {
    */
   async stop({ graceMs = 5000 } = {}) {
     if (this.stopping) return this.stopping
+    this.signalStopRequested()
     this.stopping = (async () => {
       this.running = false
 
@@ -479,8 +493,11 @@ export class FaultlineAgent {
         const timedOut = Symbol('timeout')
         let timer
         const deadline = new Promise((resolve) => {
+          // Deliberately kept ref'd: this timer *is* the grace period. Unref'ing
+          // it lets Node call the loop empty and tear down mid-shutdown when
+          // nothing else happens to be pending, cutting the wait short. It is
+          // cleared immediately after the race, so it cannot delay exit either.
           timer = setTimeout(() => resolve(timedOut), graceMs)
-          timer.unref?.()
         })
         const outcome = await Promise.race([this.tickDone, deadline])
         clearTimeout(timer)

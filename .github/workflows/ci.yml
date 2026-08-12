@@ -124,6 +124,11 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # The dataset belongs to the OmniAnomaly authors and is deliberately not
+      # vendored, so it has to be fetched before the backtest can run. Only the
+      # machine used below is downloaded.
+      - name: Fetch SMD machine-1-1
+        run: npm run fetch:dataset -- --machines=machine-1-1
       # Bounded on purpose: one machine at 10-sample aggregation runs in about a
       # minute, where the full default sweep does not finish in any reasonable
       # CI budget. It is a regression barrier on real telemetry, not a
