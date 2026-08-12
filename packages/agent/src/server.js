@@ -69,6 +69,18 @@ export function renderPrometheusMetrics(agent) {
     '# HELP faultline_collect_errors_total Failed collection cycles.',
     '# TYPE faultline_collect_errors_total counter',
     `faultline_collect_errors_total ${snapshot.collectErrors}`,
+    '# HELP faultline_empty_collections_total Collections that succeeded but returned no samples.',
+    '# TYPE faultline_empty_collections_total counter',
+    `faultline_empty_collections_total ${snapshot.emptyCollections}`,
+    '# HELP faultline_incomplete_samples_total Samples dropped for missing metrics.',
+    '# TYPE faultline_incomplete_samples_total counter',
+    `faultline_incomplete_samples_total ${snapshot.dataQuality.incompleteSamples}`,
+    '# HELP faultline_telemetry_healthy Whether the agent is observing valid telemetry (distinct from faultline_up).',
+    '# TYPE faultline_telemetry_healthy gauge',
+    `faultline_telemetry_healthy ${snapshot.health.status === 'ok' ? 1 : 0}`,
+    '# HELP faultline_seconds_since_data Seconds since the last complete sample was accepted.',
+    '# TYPE faultline_seconds_since_data gauge',
+    `faultline_seconds_since_data ${snapshot.health.secondsSinceData ?? -1}`,
     '# HELP faultline_risk_score Current cascade risk score per service.',
     '# TYPE faultline_risk_score gauge',
     '# HELP faultline_qualified_signals Currently qualified drift signals per service.',
@@ -79,6 +91,12 @@ export function renderPrometheusMetrics(agent) {
 
   lines.push('# HELP faultline_service_silenced Whether alerting is suppressed for a service.')
   lines.push('# TYPE faultline_service_silenced gauge')
+  lines.push('# HELP faultline_service_stale_seconds Seconds since a complete sample for this service.')
+  lines.push('# TYPE faultline_service_stale_seconds gauge')
+
+  const staleness = new Map(
+    snapshot.dataQuality.freshness.map((f) => [f.service, f.staleSeconds])
+  )
 
   for (const service of snapshot.services) {
     const label = `{service="${escapeLabel(service.service)}"}`
@@ -88,6 +106,8 @@ export function renderPrometheusMetrics(agent) {
     }
     lines.push(`faultline_service_firing${label} ${service.firing ? 1 : 0}`)
     lines.push(`faultline_service_silenced${label} ${service.silencedBy ? 1 : 0}`)
+    const stale = staleness.get(service.service)
+    if (Number.isFinite(stale)) lines.push(`faultline_service_stale_seconds${label} ${stale}`)
   }
 
   lines.push('# HELP faultline_silences_active Currently active silences.')
@@ -134,9 +154,14 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
 
       if (route === 'GET /health') {
         const snapshot = agent.snapshot()
-        const healthy = snapshot.running && snapshot.consecutiveCollectErrors < 3
+        const health = snapshot.health
+        const healthy = health.status === 'ok'
         return json(res, healthy ? 200 : 503, {
-          status: healthy ? 'ok' : 'degraded',
+          status: health.status,
+          // "The process is up" and "the telemetry is trustworthy" are separate
+          // claims. A probe that only ever saw the first is how a silent
+          // exporter failure gets mistaken for a quiet night.
+          reasons: health.reasons,
           agent: snapshot.name,
           version: snapshot.version,
           uptimeSeconds: snapshot.uptimeSeconds,
@@ -145,6 +170,12 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
           ticks: snapshot.ticks,
           lastCollectAt: snapshot.lastCollectAt,
           consecutiveCollectErrors: snapshot.consecutiveCollectErrors,
+          consecutiveEmptyCollections: snapshot.consecutiveEmptyCollections,
+          lastDataAt: health.lastDataAt,
+          secondsSinceData: health.secondsSinceData,
+          noDataGraceSeconds: health.noDataGraceSeconds,
+          staleServices: health.staleServices,
+          incompleteSamples: snapshot.dataQuality.incompleteSamples,
           servicesTracked: snapshot.services.length,
         })
       }

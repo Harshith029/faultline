@@ -1,6 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
+import { cleanText, parsePath } from '../lib/hypothesis'
+import SampleDataNotice from './SampleDataNotice'
 
-const cleanText = (value = '') => String(value).replace(/\s+/g, ' ').trim()
+/**
+ * A scripted walkthrough of the bundled incident scenario.
+ *
+ * Every answer below is fixed text written in advance. Nothing here calls a
+ * model, and the panel is labelled accordingly: presenting canned answers as
+ * live analysis is the fastest way to lose an operator's trust at exactly the
+ * moment they need to rely on the tool.
+ */
 
 const METRIC_LABELS = {
   p99_latency_z: 'Latency',
@@ -72,7 +81,7 @@ const getStatusMeta = (activeWindowData) => {
 
   if (activeWindowData?.triggered) {
     return {
-      label: 'Cascade detected',
+      label: 'Convergence detected',
       badge: 'bg-amber-500/15 text-amber-200 ring-1 ring-amber-400/30',
       color: '#F59E0B',
       summary: 'The trigger threshold has been crossed. The best move now is to slow propagation.',
@@ -109,32 +118,22 @@ const getPrimaryAction = (activeWindowData, hypothesis) => {
   return 'No immediate intervention is required. Maintain watch on the active window and trend direction.'
 }
 
-const getPathNodes = (hypothesis) =>
-  cleanText(hypothesis?.cascade_path ?? '')
-    .split(/\s*->\s*/)
-    .map((node) => node.trim())
-    .filter(Boolean)
+// Shared with HypothesisCard so both render the same field the same way,
+// whichever arrow separator produced it.
+const getPathNodes = (hypothesis) => parsePath(hypothesis?.cascade_path)
 
 export default function IncidentChatAgent({ activeWindow, activeWindowData, hypothesis }) {
   const [isOpen, setIsOpen] = useState(false)
   const [messages, setMessages] = useState([])
-  const [isTyping, setIsTyping] = useState(false)
   const [showContext, setShowContext] = useState(false)
   const [showPromptRail, setShowPromptRail] = useState(true)
   const [selectedPromptId, setSelectedPromptId] = useState(null)
   const messagesEndRef = useRef(null)
-  const replyTimeoutRef = useRef(null)
   const messageIdRef = useRef(1)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, isTyping])
-
-  useEffect(() => () => {
-    if (replyTimeoutRef.current) {
-      clearTimeout(replyTimeoutRef.current)
-    }
-  }, [])
+  }, [messages])
 
   const nextMessageId = () => {
     const nextId = messageIdRef.current
@@ -143,8 +142,6 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
   }
 
   const handleQuestion = (qa) => {
-    if (isTyping) return
-
     setSelectedPromptId(qa.id)
     setShowPromptRail(false)
     setShowContext(false)
@@ -157,24 +154,17 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
       },
     ])
 
-    setIsTyping(true)
-
-    if (replyTimeoutRef.current) {
-      clearTimeout(replyTimeoutRef.current)
-    }
-
-    replyTimeoutRef.current = setTimeout(() => {
-      setIsTyping(false)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: nextMessageId(),
-          role: 'agent',
-          text: cleanText(qa.answer),
-        },
-      ])
-      replyTimeoutRef.current = null
-    }, 1200)
+    // Answered immediately. The previous version delayed a canned string by
+    // 1.2s to imitate model latency, which is a deception with no upside: the
+    // answer is already known the moment the question is picked.
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: nextMessageId(),
+        role: 'agent',
+        text: cleanText(qa.answer),
+      },
+    ])
   }
 
   const statusMeta = getStatusMeta(activeWindowData)
@@ -184,7 +174,7 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
   const primaryAction = getPrimaryAction(activeWindowData, hypothesis)
   const activeSignals = activeWindowData?.qualified_signals ?? []
   const responseCount = messages.filter((message) => message.role === 'agent').length
-  const hasConversation = messages.length > 0 || isTyping
+  const hasConversation = messages.length > 0
   const selectedPrompt = QA_PAIRS.find((qa) => qa.id === selectedPromptId) ?? null
 
   const quickFacts = [
@@ -206,8 +196,8 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        aria-label={isOpen ? 'Close AI analyst' : 'Open AI analyst'}
-        title={isOpen ? 'Close AI analyst' : 'Open AI analyst'}
+        aria-label={isOpen ? 'Close scenario walkthrough' : 'Open scenario walkthrough'}
+        title={isOpen ? 'Close scenario walkthrough' : 'Open scenario walkthrough'}
         className={`fixed bottom-5 z-50 flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-slate-950/88 text-sky-200 shadow-[0_26px_70px_-34px_rgba(2,6,23,0.95)] backdrop-blur-xl transition duration-300 hover:-translate-y-1 hover:border-sky-400/30 hover:bg-slate-900/95 ${
           isOpen ? 'right-[29rem]' : 'right-5'
         }`}
@@ -243,10 +233,10 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
                 </span>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-500">
-                    FAULTLINE AI
+                    SCRIPTED WALKTHROUGH
                   </div>
                   <div className="mt-1 text-lg font-semibold text-white">
-                    AI Analyst
+                    Scenario Q&amp;A
                   </div>
                 </div>
               </div>
@@ -260,7 +250,7 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
                 type="button"
                 onClick={() => setIsOpen(false)}
                 className="rounded-full border border-white/10 bg-white/5 p-2 text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
-                aria-label="Close AI analyst"
+                aria-label="Close scenario walkthrough"
               >
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8">
                   <path d="m6 6 12 12M18 6 6 18" strokeLinecap="round" />
@@ -395,13 +385,10 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
                   type="button"
                   key={qa.id}
                   onClick={() => handleQuestion(qa)}
-                  disabled={isTyping}
                   className={`min-w-[180px] rounded-[20px] border px-4 py-3 text-left transition ${
-                    isTyping
-                      ? 'cursor-not-allowed border-white/10 bg-white/5 text-slate-500 opacity-60'
-                      : selectedPromptId === qa.id
-                        ? 'border-sky-400/25 bg-sky-400/10'
-                        : 'border-white/10 bg-slate-950/55 hover:-translate-y-0.5 hover:border-sky-400/25 hover:bg-sky-400/8'
+                    selectedPromptId === qa.id
+                      ? 'border-sky-400/25 bg-sky-400/10'
+                      : 'border-white/10 bg-slate-950/55 hover:-translate-y-0.5 hover:border-sky-400/25 hover:bg-sky-400/8'
                   }`}
                 >
                   <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-500">
@@ -447,8 +434,13 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
             </button>
           </div>
 
+          <SampleDataNotice className="mt-3 shrink-0">
+            These questions and answers are fixed text for the bundled scenario. No model is called
+            and nothing here is derived from live telemetry.
+          </SampleDataNotice>
+
           <div className="chat-scroll mt-3 flex-1 overflow-y-auto pr-1">
-            {messages.length === 0 && !isTyping ? (
+            {messages.length === 0 ? (
               <div className="terminal-panel rounded-[24px] border border-dashed border-white/10 px-5 py-10 text-center">
                 <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-3xl bg-gradient-to-br from-sky-400/20 via-violet-400/15 to-rose-400/15 text-sky-200 shadow-[0_0_45px_rgba(56,189,248,0.16)]">
                   <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -457,7 +449,7 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
                   </svg>
                 </div>
                 <div className="mt-5 text-lg font-semibold text-white">
-                  Analyst ready
+                  Pick a question
                 </div>
                 <div className="mt-2 text-sm leading-6 text-slate-400">
                   Choose a prompt from the rail above. Once you do, the rail collapses so the reply stays visible.
@@ -474,9 +466,9 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
                     ) : (
                       <div className="max-w-[96%]">
                         <div className="terminal-panel rounded-[22px] rounded-tl-md border border-white/10 px-4 py-4 text-sm leading-7 text-slate-200 shadow-[0_24px_50px_-34px_rgba(2,6,23,0.95)]">
-                          <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-500">
-                            <span className="h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_18px_rgba(56,189,248,0.7)]" />
-                            FAULTLINE AI
+                          <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.28em] text-amber-300/80">
+                            <span className="h-2 w-2 rounded-full bg-amber-400 shadow-[0_0_18px_rgba(251,191,36,0.6)]" />
+                            Scripted answer
                           </div>
                           {message.text}
                         </div>
@@ -485,29 +477,6 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
                   </div>
                 ))}
 
-                {isTyping && (
-                  <div className="stagger-item max-w-[96%]">
-                    <div className="terminal-panel rounded-[22px] rounded-tl-md border border-white/10 px-4 py-4 shadow-[0_24px_50px_-34px_rgba(2,6,23,0.95)]">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="inline-block h-2 w-2 animate-bounce rounded-full bg-slate-400"
-                          style={{ animationDelay: '0s' }}
-                        />
-                        <span
-                          className="inline-block h-2 w-2 animate-bounce rounded-full bg-slate-400"
-                          style={{ animationDelay: '0.15s' }}
-                        />
-                        <span
-                          className="inline-block h-2 w-2 animate-bounce rounded-full bg-slate-400"
-                          style={{ animationDelay: '0.3s' }}
-                        />
-                        <span className="ml-2 text-xs uppercase tracking-[0.24em] text-slate-500">
-                          Building answer...
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 

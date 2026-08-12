@@ -15,7 +15,9 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - name: Unit tests (engine + agent)
+      - name: Lint and static checks
+        run: npm run lint
+      - name: Unit tests (engine + agent + benchmark + dashboard)
         run: npm test
       - name: Reference scenario verification
         run: npm run verify:engine
@@ -26,19 +28,145 @@ jobs:
       - name: Dashboard build
         run: npm run build
 
+  lambda:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/lambda/timelineHandler
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # The Lambda is outside the root workspaces and has its own lockfile, so
+      # it must be installed and tested independently. Nothing here may rely on
+      # the root install.
+      - name: Install (independent lockfile)
+        run: npm ci
+      - name: Handler imports with only its declared dependencies
+        run: node -e "import('./handler.js').then(m => { if (typeof m.handler !== 'function') throw new Error('handler export missing') })"
+      - name: Unit tests (mocked DynamoDB, CloudWatch, Bedrock)
+        run: npm test
+      - name: Build deployment artifact
+        run: npm run package
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: faultline-timeline-handler
+          path: backend/lambda/timelineHandler/dist/function.zip
+          retention-days: 14
+      # Runs the same command contributors run locally. The wrapper resolves
+      # whichever interpreter actually has cfn-lint, and exits non-zero with
+      # UNAVAILABLE if none does — so a missing tool can never be mistaken for
+      # a clean template.
+      - name: Validate CloudFormation/SAM template
+        working-directory: .
+        run: |
+          pip install --quiet cfn-lint
+          npm run lint:iac
+
+  security-defaults:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # These are asserted by unit tests too; this job makes the failure mode
+      # obvious in CI output rather than buried in a test name.
+      - name: Refuses to bind beyond loopback without a token
+        run: |
+          set +e
+          FAULTLINE_HOST=0.0.0.0 node packages/agent/bin/faultline.js start \
+            --config packages/agent/faultline.demo.json > out.log 2>&1 &
+          PID=$!
+          sleep 5
+          if kill -0 $PID 2>/dev/null; then
+            echo "FAIL: agent started unauthenticated on 0.0.0.0"
+            kill $PID
+            cat out.log
+            exit 1
+          fi
+          grep -q "Refusing to start" out.log || { echo "FAIL: wrong error"; cat out.log; exit 1; }
+          echo "OK: agent refused to start"
+      - name: Compose publishes to loopback only
+        run: |
+          grep -q '"127.0.0.1:8787:8787"' docker-compose.yml \
+            || { echo "FAIL: docker-compose must publish to 127.0.0.1"; exit 1; }
+          echo "OK: compose binds loopback"
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Audits every independent lockfile, not just the root one. A
+      # vulnerability in the Lambda tree is invisible to a root-only audit.
+      #
+      # Policy (docs/DEPENDENCIES.md): production dependencies must be clean and
+      # this build fails if they are not. Dev-only advisories are always printed
+      # but do not block, and each one must be listed as an accepted exception
+      # with a reachability assessment.
+      - name: Audit every dependency tree
+        run: npm run audit:all
+
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      # Bounded on purpose: one machine at 10-sample aggregation runs in about a
+      # minute, where the full default sweep does not finish in any reasonable
+      # CI budget. It is a regression barrier on real telemetry, not a
+      # leaderboard.
+      - name: Bounded real-data backtest (SMD machine-1-1)
+        run: node packages/benchmark/bin/backtest.js --machine=machine-1-1 --aggregate=10
+
   docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build agent image
         run: docker build -t faultline/agent:ci .
-      - name: Container starts and serves /health
+      - name: Container refuses to start unauthenticated
         run: |
-          docker run -d --name faultline-ci -p 8787:8787 faultline/agent:ci start --config faultline.demo.json
+          set +e
+          docker run --name faultline-insecure faultline/agent:ci start --config faultline.demo.json \
+            > insecure.log 2>&1
+          STATUS=$?
+          docker rm -f faultline-insecure > /dev/null 2>&1
+          if [ $STATUS -eq 0 ]; then
+            echo "FAIL: container started without a token"; cat insecure.log; exit 1
+          fi
+          grep -q "Refusing to start" insecure.log \
+            || { echo "FAIL: wrong failure reason"; cat insecure.log; exit 1; }
+          echo "OK: container refused to start without FAULTLINE_API_TOKEN"
+      - name: Container starts with a token and serves /health
+        run: |
+          docker run -d --name faultline-ci \
+            -e FAULTLINE_API_TOKEN=ci-test-token \
+            -p 127.0.0.1:8787:8787 \
+            faultline/agent:ci start --config faultline.demo.json
           for i in $(seq 1 20); do
             if curl -sf http://127.0.0.1:8787/health > /dev/null; then
               curl -s http://127.0.0.1:8787/health
+              echo
+              echo "--- anonymous write must be refused ---"
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+                http://127.0.0.1:8787/api/silences \
+                -H 'Content-Type: application/json' -d '{"match":"*"}')
               docker rm -f faultline-ci
+              [ "$CODE" = "401" ] || { echo "FAIL: anonymous silence returned $CODE"; exit 1; }
+              echo "OK: anonymous silence creation refused (401)"
               exit 0
             fi
             sleep 1

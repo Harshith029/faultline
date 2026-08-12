@@ -53,9 +53,12 @@ export function createPrometheusSource(options = {}, ctx = {}) {
         for (const series of result) {
           const service = series.metric?.[serviceLabel]
           if (!service) continue
-          const value = Number(series.value?.[1])
-          if (!Number.isFinite(value)) continue
           if (!byService.has(service)) byService.set(service, { service, timestamp })
+          const value = Number(series.value?.[1])
+          // A NaN sample (Prometheus emits these for empty rate windows) leaves
+          // the metric absent. The detector then rejects the sample rather than
+          // scoring a fabricated zero.
+          if (!Number.isFinite(value)) continue
           byService.get(service)[metric] = value
         }
       }

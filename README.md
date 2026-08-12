@@ -1,19 +1,21 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="FAULTLINE — cascade failure detection" width="100%">
+  <img src="assets/banner.svg" alt="FAULTLINE — per-service multivariate drift detection" width="100%">
 </p>
 
-<h3 align="center">Catch cascade failures while there is still time to act</h3>
+<h3 align="center">Catch a service going wrong while there is still time to act</h3>
+
+<p align="center"><em>Per-service multivariate drift triage: it shows you which metrics moved together, with auditable evidence, earlier than separate alerts would.</em></p>
 
 <p align="center">
   <a href="https://github.com/Harshith029/faultline/actions/workflows/ci.yml"><img src="https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
   <a href="packages/agent/package.json"><img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg" alt="Zero runtime dependencies"></a>
-  <img src="https://img.shields.io/badge/tests-169%20passing-brightgreen.svg" alt="169 tests passing">
-  <img src="https://img.shields.io/badge/node-%E2%89%A520-339933.svg" alt="Node 20 or newer">
+  <img src="https://img.shields.io/badge/tests-287%20passing-brightgreen.svg" alt="287 tests passing">
+  <img src="https://img.shields.io/badge/node-%E2%89%A520.19-339933.svg" alt="Node 20.19 or newer">
 </p>
 
 <p align="center">
-  <a href="#see-it-detect-a-real-cascade-in-30-seconds">Quickstart</a> ·
+  <a href="#see-it-detect-drift-in-30-seconds">Quickstart</a> ·
   <a href="#point-it-at-your-own-metrics">Configure</a> ·
   <a href="#how-detection-works">How it works</a> ·
   <a href="#does-it-actually-work">Benchmarks</a> ·
@@ -28,13 +30,15 @@ Static thresholds fire when you are already failing. FAULTLINE watches how laten
   <img src="assets/detection.svg" alt="Three telemetry signals drifting upward together. FAULTLINE fires at window 8; a static SLO alert would not fire until window 11." width="900">
 </p>
 
-It is a real monitoring agent, not a dashboard: it runs continuously, pulls metrics from Prometheus / CloudWatch / any HTTP endpoint, scores cascade risk with auditable math, manages incident lifecycle with dedup and cooldown, and alerts your webhook.
+It is a real monitoring agent, not a dashboard: it runs continuously, pulls metrics from Prometheus / CloudWatch / any HTTP endpoint, scores multi-signal drift risk with auditable math, manages incident lifecycle with dedup and cooldown, and alerts your webhook.
 
 **Zero runtime dependencies. Runs anywhere Node runs.**
 
+> **Scope, stated plainly.** FAULTLINE evaluates each service independently against its own history. It has no dependency graph, no distributed tracing, and no deploy-event feed, so it cannot establish that one service caused a problem in another. It tells you *which metrics on a service moved together, and when* — earlier than three separate alerts would. Any cross-service ordering shown in the dashboard comes from the bundled demo scenario and is labelled as sample content. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ---
 
-## See it detect a real cascade in 30 seconds
+## See it detect drift in 30 seconds
 
 ```bash
 git clone https://github.com/Harshith029/faultline.git
@@ -43,7 +47,7 @@ npm install
 npm run agent:demo
 ```
 
-The agent starts, streams synthetic telemetry for three services, and ~15 seconds in a cascade begins on `checkout-api`. You will see it caught live:
+The agent starts, streams synthetic telemetry for three services, and ~15 seconds in a multi-metric incident begins on `checkout-api`. You will see it caught live:
 
 <p align="center">
   <img src="assets/terminal.svg" alt="Terminal output showing the agent starting, detecting a cascade on checkout-api at R=4.12 with two converging signals, then resolving it." width="900">
@@ -52,17 +56,19 @@ The agent starts, streams synthetic telemetry for three services, and ~15 second
 While it runs, the agent is serving a real API:
 
 ```bash
-curl localhost:8787/health          # liveness, tick count, source, error streak
+curl localhost:8787/health          # liveness *and* telemetry validity, with freshness
 curl localhost:8787/api/state       # current risk score per service
 curl localhost:8787/api/incidents   # incident history
 curl localhost:8787/metrics         # Prometheus exposition format
 curl -X POST localhost:8787/api/inject?service=payments   # inject a fault on demand
 ```
 
-Or with Docker:
+Or with Docker. A container has to bind `0.0.0.0` inside its own network
+namespace for a published port to reach it, so a token is required — the agent
+will not start without one. Compose publishes to `127.0.0.1` only:
 
 ```bash
-docker compose up
+FAULTLINE_API_TOKEN=$(openssl rand -hex 32) docker compose up
 ```
 
 ---
@@ -126,7 +132,25 @@ curl -X POST localhost:8787/api/silences \
 
 If an incident opens while muted and is *still firing* when the window ends, it pages then rather than being lost.
 
-**Lock down the API.** It defaults to open for the localhost quickstart, and warns loudly at startup when it is. Set a token and it is enforced — with a separate read-only scope so Prometheus can scrape metrics without being able to silence your alerts:
+**Missing telemetry is never treated as good telemetry.** A sample is accepted only if every configured metric is present and finite. If a metric is absent, null, or unparseable, the whole sample is rejected and counted — it is not coerced to `0`. That coercion is the failure mode this guards: lose your error-rate series and a zero-filled sample reads as a flawless 0% error rate, which suppresses the convergence requirement and can mute a live incident while the agent still reports healthy.
+
+`/health` therefore answers two separate questions:
+
+```json
+{
+  "status": "degraded",
+  "reasons": ["telemetry_stale"],
+  "lastDataAt": "2026-08-10T05:02:00.000Z",
+  "secondsSinceData": 420,
+  "noDataGraceSeconds": 300,
+  "consecutiveEmptyCollections": 7,
+  "incompleteSamples": 3
+}
+```
+
+A collection that succeeds but returns nothing is counted as empty, not as a healthy tick, and after `detector.noDataGraceSeconds` (default 300) the agent reports `degraded` with a 503. A previously healthy service that becomes stale also degrades `/health`, even if another service is still reporting. Freshness follows the telemetry sample timestamp rather than collection time, so replayed old samples cannot keep monitoring green. `faultline_telemetry_healthy`, `faultline_seconds_since_data`, `faultline_incomplete_samples_total`, and per-service `faultline_service_stale_seconds` are all exported, so an exporter that quietly stops looks like a problem rather than a quiet night.
+
+**The API cannot be exposed unauthenticated.** It is open only when bound to loopback, which is what the quickstart does. Bind it anywhere else without a token and the agent **refuses to start** — `POST /api/silences` and `POST /api/inject` are a control plane, and a startup warning that still serves the request is not a control. Set a token to bind beyond localhost, with a separate read-only scope so Prometheus can scrape metrics without being able to silence your alerts:
 
 ```bash
 export FAULTLINE_API_TOKEN=$(openssl rand -hex 32)
@@ -147,12 +171,22 @@ export FAULTLINE_READ_TOKEN=$(openssl rand -hex 32)
 **Amazon CloudWatch** (needs `npm install @aws-sdk/client-cloudwatch`):
 
 ```json
-{ "source": { "type": "cloudwatch", "options": {
-  "region": "us-east-1",
-  "namespace": "AWS/ApiGateway",
-  "targets": [{ "service": "checkout-api", "dimensions": { "ApiName": "prod-api" } }]
-}}}
+{
+  "detector": { "metrics": ["p99_latency", "client_error_rate", "error_rate"] },
+  "source": { "type": "cloudwatch", "options": {
+    "region": "us-east-1",
+    "namespace": "AWS/ApiGateway",
+    "targets": [{ "service": "checkout-api", "dimensions": { "ApiName": "prod-api" } }]
+  }}
+}
 ```
+
+The CloudWatch source emits `client_error_rate`, not `retry_rate`: API Gateway's
+`4XXError` counts every client-side error — auth failures, malformed requests,
+throttling — and is not a retry counter. If you have a real retry metric, map it
+explicitly with `options.metrics`. The source checks its metric keys against
+`detector.metrics` at startup and refuses to run if it cannot supply them, rather
+than collecting forever and detecting nothing.
 
 Then run it, with secrets supplied by the environment — never committed:
 
@@ -234,13 +268,22 @@ A parameter sweep confirms this is not a tuning problem: precision never exceeds
 
 ⚠️ **These scenarios were designed from the same mental model as the detector, so they largely measure whether the implementation matches its own assumptions.** They are a regression test, not evidence of field performance — the real-world numbers above are ~6× worse. Read them as "does the math still behave as specified", nothing more.
 
-| Detector | Precision | Recall | F1 |
-|---|---:|---:|---:|
-| **FAULTLINE (strict)** | **83.3%** | **100%** | **90.9%** |
-| FAULTLINE (default) | 69.4% | 100% | 82.0% |
-| Sustained 3σ | 59.2% | 100% | 74.3% |
-| Single metric 3σ | 35.5% | 66.0% | 46.2% |
-| Static SLO (3×) | 33.3% | 3.0% | 5.5% |
+The default and strict rows are the **agent's incremental rolling detector** — the
+same `RollingDetector` the deployed agent runs, fed one window at a time so the
+baseline ages out of a bounded buffer exactly as it does in production. The
+fixed-baseline row is a reference variant that scores a whole series in one call
+against a baseline that never moves. It is kept for comparison and is **not what
+ships**; benchmarking only that variant would flatter the agent on precisely the
+scenarios where it is weakest.
+
+| Detector | Precision | Recall | F1 | Median delay |
+|---|---:|---:|---:|---:|
+| **FAULTLINE strict (agent, rolling)** | **82.6%** | **100%** | **90.5%** | +12w |
+| FAULTLINE default (agent, rolling) | 69.4% | 100% | 82.0% | +10w |
+| FAULTLINE fixed-baseline (reference, not deployed) | 69.4% | 100% | 82.0% | +10w |
+| Sustained 3σ | 59.2% | 100% | 74.3% | +8w |
+| Single metric 3σ | 35.5% | 66.0% | 46.2% | +6w |
+| Static SLO (3×) | 33.3% | 3.0% | 5.5% | +15w |
 
 Both FAULTLINE profiles catch **every** cascade in the suite. The static SLO baseline catches 3% — it is a lagging outcome metric, which is exactly the problem this project exists to address. Median lead over that baseline: **7 windows**.
 
@@ -315,7 +358,7 @@ docs/               architecture and operations
 ## Testing
 
 ```bash
-npm test              # 115 unit + integration tests
+npm test              # 264 tests across engine, agent, benchmark, dashboard
 npm run verify:engine # reference cascade assertion
 npm run benchmark     # synthetic precision/recall/lead time vs baselines
 npm run fetch:dataset # download the Server Machine Dataset (not vendored)

@@ -10,7 +10,7 @@ const getGaugeColor = (score) => {
 }
 
 const getStatusCopy = (score) => {
-  if (score >= 3.0) return { label: 'Cascade detected', tone: 'Critical' }
+  if (score >= 3.0) return { label: 'Convergence detected', tone: 'Critical' }
   if (score >= 2.5) return { label: 'Instability forming', tone: 'Warning' }
   return { label: 'System nominal', tone: 'Healthy' }
 }

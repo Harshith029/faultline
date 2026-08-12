@@ -19,15 +19,24 @@ import SignalConvergenceHeatmap from './SignalConvergenceHeatmap'
 import ConfidenceTrendChart from './ConfidenceTrendChart'
 import IncidentChatAgent from './IncidentChatAgent'
 
-const LOCAL_HYPOTHESIS = {
+/**
+ * Fixed narrative for the bundled 12-window scenario.
+ *
+ * This is hand-written demo text, not an analysis. Faultline observes one
+ * service at a time and has no topology, traces, or deploy history, so it
+ * cannot establish that one service caused another. Everything rendered from
+ * this object is labelled as sample scenario content.
+ */
+const SAMPLE_HYPOTHESIS = {
+  generated_by: 'sample',
   root_service: 'service-b',
   mechanism:
-    'Connection-pool exhaustion on service-b: outbound connections saturate, requests queue, and P99 latency climbs. Clients respond with retries, amplifying load until errors propagate to downstream dependents.',
+    'The scenario models connection-pool exhaustion on service-b: outbound connections saturate, requests queue, and P99 latency climbs. Clients retry, amplifying load until errors appear downstream.',
   cascade_path: 'service-b → service-d → service-f',
   evidence: [
-    'P99 latency held above 2σ from W5 onward — the leading indicator of the cascade.',
-    'Retry rate qualified at W8 as clients re-issued slow requests, compounding connection-pool pressure.',
-    'Error rate breached its SLO three windows later (W11), confirming downstream propagation.',
+    'P99 latency held above 2σ from W5 onward — the leading indicator in this scenario.',
+    'Retry rate qualified at W8, consistent with clients re-issuing slow requests.',
+    'Error rate breached its 2% SLO three windows later (W11).',
   ],
 }
 
@@ -88,7 +97,9 @@ export default function FaultlineDashboard() {
   const activeWindowData = windows[Math.min(activeWindow, windows.length) - 1]
   const detectionWindow = engine.detectionWindow
   const detectionThreshold = detectionWindow?.window_number ?? 8
-  const hypothesisSource = apiHypothesis ?? LOCAL_HYPOTHESIS
+  // A hypothesis from the API carries its own provenance; the bundled scenario
+  // text is only ever shown for the scenario, never alongside live telemetry.
+  const hypothesisSource = apiHypothesis ?? SAMPLE_HYPOTHESIS
   const hypothesis = !isLive && activeWindow >= detectionThreshold ? hypothesisSource : null
 
   if (!activeWindowData) return null

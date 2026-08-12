@@ -79,14 +79,64 @@ test('detection is driven by converging signals, not one metric', async () => {
   assert.ok(peakSignals >= 2, `expected multi-signal convergence, peaked at ${peakSignals}`)
 })
 
-test('missing or non-numeric metrics are coerced rather than crashing', () => {
+test('a sample with non-numeric or null metrics is rejected, not coerced to zero', () => {
   const detector = new RollingDetector({ params: params(), historyWindows: 60, logger: silentLogger })
-  for (let i = 0; i < 10; i++) {
-    detector.ingest([{ service: 'api', p99_latency: 'not-a-number', error_rate: null }])
-  }
+
+  const [result] = detector.ingest([
+    { service: 'api', p99_latency: 'not-a-number', retry_rate: 1, error_rate: null },
+  ])
+
+  assert.equal(result.status, 'incomplete_sample')
+  assert.deepEqual(result.missing, ['p99_latency', 'error_rate'])
+  assert.equal(detector.buffer.size('api'), 0, 'nothing may enter the rolling buffer')
+})
+
+test('an entirely empty sample is rejected rather than buffered as zeros', () => {
+  const detector = new RollingDetector({ params: params(), historyWindows: 60, logger: silentLogger })
+
   const [result] = detector.ingest([{ service: 'api' }])
-  assert.equal(result.status, 'evaluated')
-  assert.equal(result.evaluation.triggered, false)
+
+  assert.equal(result.status, 'incomplete_sample')
+  assert.deepEqual(result.missing, ['p99_latency', 'retry_rate', 'error_rate'])
+  assert.equal(detector.incompleteSamples, 1)
+})
+
+test('dropping a metric mid-incident cannot silence it by zero-filling', () => {
+  // The failure this guards: an exporter stops exposing retry_rate and
+  // error_rate. Under the old coercion those became 0, the convergence
+  // requirement was never met, and a live incident went quiet.
+  const detector = new RollingDetector({ params: params(), historyWindows: 60, logger: silentLogger })
+
+  for (let i = 0; i < 12; i++) {
+    detector.ingest([{ service: 'api', p99_latency: 100, retry_rate: 1, error_rate: 0.5 }])
+  }
+  // Incident begins across all three signals.
+  for (let i = 0; i < 4; i++) {
+    detector.ingest([{ service: 'api', p99_latency: 400, retry_rate: 9, error_rate: 6 }])
+  }
+
+  // Now the exporter loses two of the three series.
+  const [result] = detector.ingest([{ service: 'api', p99_latency: 400 }])
+
+  assert.equal(result.status, 'incomplete_sample')
+  assert.deepEqual(result.missing, ['retry_rate', 'error_rate'])
+
+  // The last complete evaluation is preserved; the gap did not overwrite it
+  // with a healthier-looking window.
+  const windows = detector.windowsFor('api')
+  assert.equal(windows.length, 16, 'the incomplete sample must not extend the series')
+  assert.equal(windows.at(-1).raw.error_rate, 6)
+})
+
+test('freshness reports how long ago each service last produced a complete sample', () => {
+  const detector = new RollingDetector({ params: params(), historyWindows: 60, logger: silentLogger })
+  const t0 = Date.UTC(2024, 0, 1)
+
+  detector.ingest([{ service: 'api', p99_latency: 100, retry_rate: 1, error_rate: 0.5 }], { nowMs: t0 })
+
+  const [fresh] = detector.freshness(t0 + 90_000)
+  assert.equal(fresh.service, 'api')
+  assert.equal(fresh.staleSeconds, 90)
 })
 
 test('the agent detects on a custom metric set end to end', () => {

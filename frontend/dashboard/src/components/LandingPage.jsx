@@ -25,9 +25,9 @@ const FEATURES = [
     tag: 'Benchmark',
   },
   {
-    title: 'AI root-cause diagnosis',
-    body: 'At the moment of detection, Amazon Bedrock generates a structured hypothesis: root service, failure mechanism, cascade path, and evidence from the actual signals.',
-    tag: 'Bedrock',
+    title: 'Optional model-written summary',
+    body: 'When a Bedrock model is configured, the detection window is summarised in plain language, constrained to the one service that drifted and to the signals the detector actually qualified. It explains; it never detects, and it is not a root-cause claim.',
+    tag: 'Bedrock (optional)',
   },
   {
     title: 'Counterfactual simulation',
@@ -40,8 +40,8 @@ const FEATURES = [
     tag: 'Your data',
   },
   {
-    title: 'Cascade visualization',
-    body: 'A live dependency map shows the failure propagating across services, alongside drift charts, risk timelines, and signal convergence heatmaps.',
+    title: 'Signal visualization',
+    body: 'Drift charts, risk timelines, and signal convergence heatmaps for the service under evaluation, plus an illustrative scenario topology that is clearly marked as sample content.',
     tag: 'Dashboard',
   },
 ]
@@ -63,7 +63,7 @@ const STEPS = [
     step: '03',
     title: 'Score & trigger',
     formula: 'R = mean_z × ln(1 + n) × W',
-    body: 'Converging signals compound the risk score. When R crosses 3.0, detection fires and the AI explains why.',
+    body: 'Converging signals compound the risk score. When R crosses 3.0, detection fires — on the math alone, with or without a model configured.',
   },
 ]
 
@@ -112,9 +112,10 @@ export default function LandingPage({ onLaunch }) {
           </h1>
 
           <p className="mt-6 max-w-2xl text-base leading-relaxed text-slate-400 sm:text-lg">
-            FAULTLINE reads the early behavioral signature of cascade failures — sustained drift
-            converging across latency, retries, and errors — and fires while there is still time to act.
-            Deterministic math detects. AI explains. Engineers prevent.
+            FAULTLINE watches each service for sustained drift converging across several metrics at
+            once — latency, retries, and errors moving together — and fires earlier than any one of
+            them would alone. Deterministic math detects; a model can optionally summarise. It triages
+            per-service drift, and does not infer causality between services.
           </p>
 
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
@@ -199,7 +200,7 @@ export default function LandingPage({ onLaunch }) {
 
           <div className="mt-10 rounded-[24px] border border-white/10 bg-white/[0.02] p-6 text-center">
             <p className="text-sm text-slate-400">
-              Detection is deterministic math only. AI provides explanation — never detection.
+              Detection is deterministic math only. A model may explain a detection — never cause one.
             </p>
           </div>
         </section>
@@ -208,7 +209,7 @@ export default function LandingPage({ onLaunch }) {
           <div className="dashboard-card relative overflow-hidden rounded-[28px] border border-sky-400/20 p-10 text-center backdrop-blur-sm sm:p-14">
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-sky-500/10 via-transparent to-violet-500/10" />
             <h2 className="relative text-3xl font-semibold text-white sm:text-4xl">
-              Walk through a cascade failure, live
+              Walk through a worked incident scenario
             </h2>
             <p className="relative mx-auto mt-4 max-w-xl text-sm leading-relaxed text-slate-400 sm:text-base">
               Scrub a 12-window incident from nominal to outage, watch detection fire three windows
@@ -230,7 +231,7 @@ export default function LandingPage({ onLaunch }) {
             <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-slate-400">
               <FaultlineMark className="h-4 w-4" />
             </span>
-            <span>FAULTLINE — AI Reliability Intelligence</span>
+            <span>FAULTLINE — per-service multivariate drift triage</span>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-6">
             <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="transition hover:text-slate-300">GitHub</a>

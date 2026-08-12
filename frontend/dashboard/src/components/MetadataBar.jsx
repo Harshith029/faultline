@@ -32,7 +32,7 @@ const STATUS_CONFIG = {
     dotClass: 'bg-amber-400',
   },
   cascade: {
-    label: 'Cascade detected',
+    label: 'Convergence detected',
     tone: 'Red',
     color: '#F43F5E',
     badgeClass: 'border-rose-400/30 bg-rose-400/10 text-rose-200',
@@ -112,7 +112,7 @@ export default function MetadataBar({
                   </a>
                 </div>
                 <div className="mt-1 text-sm text-slate-400">
-                  AI Reliability Intelligence
+                  Multivariate drift triage
                 </div>
               </div>
             </div>

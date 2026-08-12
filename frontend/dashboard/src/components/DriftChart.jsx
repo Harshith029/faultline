@@ -193,7 +193,7 @@ export default function DriftChart({ windows, activeWindow }) {
                   stroke="#F43F5E"
                   strokeDasharray="4 4"
                   strokeWidth={1.5}
-                  label={{ value: 'Cascade detected', position: 'top', fill: '#F43F5E', fontSize: 11 }}
+                  label={{ value: 'Convergence detected', position: 'top', fill: '#F43F5E', fontSize: 11 }}
                 />
               )}
 

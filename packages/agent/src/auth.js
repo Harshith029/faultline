@@ -30,21 +30,38 @@ export function extractToken(req) {
  * `/health` is always anonymous — load balancers and Kubernetes probes have to
  * reach it before any credential is in play, and it exposes no telemetry.
  */
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '::ffff:127.0.0.1'])
+
+/** Only a loopback bind keeps the API reachable from the local machine alone. */
+export const isLoopbackHost = (host) => LOOPBACK_HOSTS.has(String(host ?? '').trim().toLowerCase())
+
 export function createAuthenticator(serverConfig = {}, env = process.env) {
   const auth = serverConfig.auth ?? {}
   const writeToken = auth.token ?? (auth.tokenEnv ? env[auth.tokenEnv] : undefined)
   const readToken = auth.readOnlyToken ?? (auth.readOnlyTokenEnv ? env[auth.readOnlyTokenEnv] : undefined)
   const enabled = Boolean(writeToken)
   const allowAnonymousRead = auth.allowAnonymousRead === true
+  const loopbackOnly = isLoopbackHost(serverConfig.host)
 
   return {
     enabled,
     allowAnonymousRead,
+    loopbackOnly,
     hasReadOnlyToken: Boolean(readToken),
 
     /** Returns null when allowed, or an error object describing the refusal. */
     authorize(req, { write = false, anonymous = false } = {}) {
-      if (anonymous || !enabled) return null
+      if (anonymous) return null
+
+      if (!enabled) {
+        // Startup refuses this combination outright, so reaching here means
+        // something bypassed that check. Defence in depth: never serve a
+        // state-changing route unauthenticated off a non-loopback bind.
+        if (write && !loopbackOnly) {
+          return { status: 401, error: 'authentication required for write routes on a non-loopback bind' }
+        }
+        return null
+      }
 
       const token = extractToken(req)
       if (!token) {

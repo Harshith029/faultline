@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import SampleDataNotice from './SampleDataNotice'
 
 const NODES = [
   { id: 'service-a', label: 'service-a', x: 80, y: 140, role: 'Gateway' },
@@ -48,11 +49,13 @@ const getNodeTooltip = (nodeId, activeWindow, windows) => {
   const status = getNodeStatus(nodeId, activeWindow)
 
   const statusLabels = {
-    root: 'ROOT CAUSE',
-    affected: 'CASCADE VICTIM',
-    healthy: 'HEALTHY',
+    root: 'MEASURED DRIFT',
+    affected: 'SCENARIO: DOWNSTREAM',
+    healthy: 'NO SCENARIO DRIFT',
   }
 
+  // Only service-b has telemetry in this scenario, so it is the one node whose
+  // numbers come from the detector. Everything else is illustrative.
   if (nodeId === 'service-b' && activeWindow >= 8) {
     return {
       status: statusLabels[status],
@@ -61,7 +64,7 @@ const getNodeTooltip = (nodeId, activeWindow, windows) => {
         `Retry Rate: z=${window?.metrics?.retry_rate_z?.toFixed(1)} sigma`,
         `Error Rate: z=${window?.metrics?.error_rate_z?.toFixed(1)} sigma`,
         `R Score: ${window?.R_score?.toFixed(2)}`,
-        'Root cause: Connection pool exhaustion',
+        'Measured by the detector from this service’s own metrics.',
       ],
     }
   }
@@ -70,9 +73,9 @@ const getNodeTooltip = (nodeId, activeWindow, windows) => {
     return {
       status: statusLabels[status],
       details: [
-        'Receiving degraded responses from service-b',
-        'Latency elevated due to upstream exhaustion',
-        'Will self-recover when service-b pool drains',
+        'Marked downstream by the scenario script.',
+        'No telemetry is collected for this service.',
+        'Faultline did not observe any link to service-b.',
       ],
     }
   }
@@ -80,9 +83,8 @@ const getNodeTooltip = (nodeId, activeWindow, windows) => {
   return {
     status: statusLabels.healthy,
     details: [
-      'Operating within normal parameters',
-      'No drift signals detected',
-      'Isolated from cascade path',
+      'Not part of the scripted incident path.',
+      'No telemetry is collected for this service.',
     ],
   }
 }
@@ -106,21 +108,26 @@ export default function ServiceArchitectureMap({ windows, activeWindow }) {
   else if (load >= 0.5) loadColor = '#f59e0b'
 
   const tooltip = selectedNode ? getNodeTooltip(selectedNode, activeWindow, windows) : null
-  const activeLabel = activeWindow >= 8 ? 'Cascade active' : 'Topology nominal'
+  const activeLabel = activeWindow >= 8 ? 'Scenario path highlighted' : 'Scenario baseline'
 
   return (
     <div className="w-full">
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">
-            Dependency topology
+            Scenario topology
           </div>
           <div className="mt-2 text-2xl font-semibold text-white">
-            Service Architecture
+            Scenario Architecture
           </div>
           <div className="mt-2 max-w-xl text-sm text-slate-400">
-            Observe the dependency chain as pressure travels from the root service through downstream systems.
+            The nodes, edges, and highlighted path below are declared by the bundled scenario, not
+            discovered. Faultline evaluates each service independently and never observes calls
+            between services.
           </div>
+          <SampleDataNotice className="mt-3 max-w-xl">
+            Fixed illustration. Highlighting follows the scrubber position, not measured propagation.
+          </SampleDataNotice>
         </div>
 
         <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium ring-1 ${

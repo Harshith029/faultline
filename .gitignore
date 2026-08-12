@@ -1,4 +1,4 @@
-# Environment variables — never commit
+# Environment variables ï¿½ never commit
 .env.local
 .env
 **/.env.local
@@ -11,8 +11,10 @@ node_modules/
 # Build output
 frontend/dashboard/dist/
 
-# Lambda zip
+# Lambda build output. Always rebuilt by `npm run package`; never committed,
+# and never deployed from a stale local copy.
 backend/lambda/timelineHandler/function.zip
+backend/lambda/timelineHandler/dist/
 
 # Logs and temp files
 *.log

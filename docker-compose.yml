@@ -5,7 +5,11 @@ services:
     container_name: faultline-agent
     restart: unless-stopped
     ports:
-      - "8787:8787"
+      # Published to the host loopback only. "8787:8787" would bind 0.0.0.0 on
+      # the host and expose the silence/inject API to the whole network — and on
+      # a machine running Docker Desktop or a cloud VM, often to the internet.
+      # To expose it deliberately, set FAULTLINE_API_TOKEN and change this.
+      - "127.0.0.1:8787:8787"
     volumes:
       - faultline-data:/app/data
       # Mount your own config; defaults to the built-in synthetic demo.
@@ -13,6 +17,11 @@ services:
     environment:
       FAULTLINE_LOG_PRETTY: "false"
       FAULTLINE_INTERVAL_SECONDS: "60"
+      # The container binds all interfaces *inside its own network namespace*;
+      # the port publishing above is what limits reach. Set a token before
+      # changing either. Without one, a non-loopback bind refuses to start.
+      FAULTLINE_HOST: "0.0.0.0"
+      FAULTLINE_API_TOKEN: "${FAULTLINE_API_TOKEN:?set FAULTLINE_API_TOKEN before starting; the API can create silences and inject faults}"
       # Secrets come from the environment, never from a committed config file.
       FAULTLINE_WEBHOOK_URL: "${FAULTLINE_WEBHOOK_URL:-}"
     command: ["start", "--config", "faultline.demo.json"]

@@ -1,10 +1,21 @@
 {
   "name": "faultline-timeline-handler",
   "version": "1.0.0",
+  "description": "Faultline timeline API: DynamoDB-backed detection windows, CloudWatch live telemetry, and an optional Bedrock explanation layer.",
+  "private": true,
   "type": "module",
+  "main": "handler.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "package": "node scripts/package.mjs"
+  },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.0.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.0.0",
-    "@aws-sdk/util-dynamodb": "^3.0.0"
+    "@aws-sdk/client-bedrock-runtime": "^3.699.0",
+    "@aws-sdk/client-cloudwatch": "^3.699.0",
+    "@aws-sdk/client-dynamodb": "^3.699.0",
+    "@aws-sdk/util-dynamodb": "^3.699.0"
   }
 }

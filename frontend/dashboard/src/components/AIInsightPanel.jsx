@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import SampleDataNotice from './SampleDataNotice'
 
 const SEVERITY_CONFIG = {
   nominal: {
@@ -192,14 +193,18 @@ export default function AIInsightPanel({ activeWindow, activeWindowData }) {
       <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">
-            AI Analysis
+            Window commentary
           </div>
           <div className="mt-2 text-2xl font-semibold text-white">
             {insight.title}
           </div>
           <div className="mt-2 max-w-2xl text-sm text-slate-400">
-            Operator-facing interpretation of the active window using deterministic detection output and the current signal mix.
+            Pre-written commentary for each window of the bundled scenario. The badge, R score, and
+            signal counts beside it are computed live by the detector; the prose is not.
           </div>
+          <SampleDataNotice className="mt-3 max-w-2xl">
+            One fixed paragraph per window, written in advance. No model produces this text.
+          </SampleDataNotice>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -226,7 +231,7 @@ export default function AIInsightPanel({ activeWindow, activeWindowData }) {
                   boxShadow: `0 0 14px ${config.color}66`,
                 }}
               />
-              Live model brief
+              Scenario commentary
             </div>
             <div className="mt-4 min-h-[148px] text-[15px] leading-8 text-slate-200">
               {displayedText}

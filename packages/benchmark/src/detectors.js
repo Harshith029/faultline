@@ -1,4 +1,5 @@
 import { runDetection, computeBaseline, DEFAULT_PARAMS } from '@faultline/core'
+import { RollingDetector } from '@faultline/agent/src/detector.js'
 
 export const BENCH_PARAMS = {
   ...DEFAULT_PARAMS,
@@ -18,16 +19,72 @@ const firstIndex = (windows, predicate) => {
   return null
 }
 
+// The rolling buffer the deployed agent uses. Sized as the agent's default so
+// the benchmark measures the configuration people actually run.
+export const BENCH_HISTORY_WINDOWS = 40
+
+const silentLogger = { debug() {}, info() {}, warn() {}, error() {} }
+
 /**
- * FAULTLINE: sustained multi-signal convergence scored by R.
+ * FIXED-BASELINE REFERENCE — not what the agent does.
+ *
+ * Hands the entire scenario to `runDetection` in one call, so the baseline is
+ * the first `baselineWindows` of the whole series and never moves. That is a
+ * useful reference number for comparing detector shapes on identical data, but
+ * it is not the deployed behaviour and must not be reported as if it were.
  */
-export function faultlineDetector(windows, params = BENCH_PARAMS) {
+export function faultlineFixedBaselineDetector(windows, params = BENCH_PARAMS) {
   const result = runDetection(windows, params)
   return {
     firedAt: result.detectionWindow?.window_number ?? null,
     peakR: Math.max(...result.windows.map((w) => w.R_score)),
   }
 }
+
+/**
+ * DEPLOYED BEHAVIOUR — the agent's incremental rolling detector.
+ *
+ * Feeds windows one at a time through the same `RollingDetector` the agent
+ * runs, so the baseline ages out of a bounded buffer exactly as it does in
+ * production. This matters most for long incidents and deploy step changes: a
+ * fixed baseline never absorbs the new normal, whereas a rolling one eventually
+ * does and stops firing. Benchmarking the fixed variant therefore flatters the
+ * agent on precisely the scenarios where it is weakest.
+ */
+export function faultlineRollingDetector(
+  windows,
+  params = BENCH_PARAMS,
+  { historyWindows = BENCH_HISTORY_WINDOWS } = {}
+) {
+  const detector = new RollingDetector({ params, historyWindows, logger: silentLogger })
+
+  let firedAt = null
+  let peakR = 0
+
+  for (let i = 0; i < windows.length; i++) {
+    const w = windows[i]
+    const [result] = detector.ingest([
+      {
+        service: 'bench',
+        timestamp: w.window_timestamp ?? new Date(i * 60000).toISOString(),
+        p99_latency: w.p99_latency,
+        retry_rate: w.retry_rate,
+        error_rate: w.error_rate,
+      },
+    ])
+
+    if (result?.status !== 'evaluated') continue
+    peakR = Math.max(peakR, result.evaluation.R_score)
+    // The agent alerts on the first triggering tick, so the benchmark records
+    // the same instant rather than scanning a completed series afterwards.
+    if (firedAt === null && result.evaluation.triggered) firedAt = i + 1
+  }
+
+  return { firedAt, peakR }
+}
+
+/** Back-compat alias; the default detector is the deployed rolling one. */
+export const faultlineDetector = faultlineRollingDetector
 
 /**
  * The incumbent: alert when an outcome metric breaches a fixed SLO. Expressed
@@ -81,8 +138,24 @@ export function sustainedSingleMetricDetector(windows, { sigma = 3, sustain = 2 
 export const STRICT_PARAMS = { ...BENCH_PARAMS, minSustain: 3 }
 
 export const DETECTORS = [
-  { key: 'faultline', label: 'FAULTLINE', run: (w) => faultlineDetector(w) },
-  { key: 'faultline_strict', label: 'FAULTLINE strict', run: (w) => faultlineDetector(w, STRICT_PARAMS) },
+  {
+    key: 'faultline',
+    label: 'FAULTLINE (agent, rolling)',
+    deployed: true,
+    run: (w) => faultlineRollingDetector(w),
+  },
+  {
+    key: 'faultline_strict',
+    label: 'FAULTLINE strict (agent, rolling)',
+    deployed: true,
+    run: (w) => faultlineRollingDetector(w, STRICT_PARAMS),
+  },
+  {
+    key: 'faultline_fixed_baseline',
+    label: 'FAULTLINE fixed-baseline (reference)',
+    reference: true,
+    run: (w) => faultlineFixedBaselineDetector(w),
+  },
   { key: 'static_slo', label: 'Static SLO (3x)', run: (w) => staticSloDetector(w) },
   { key: 'single_3sigma', label: 'Single metric 3σ', run: (w) => singleMetricDetector(w) },
   { key: 'sustained_3sigma', label: 'Sustained 3σ', run: (w) => sustainedSingleMetricDetector(w) },

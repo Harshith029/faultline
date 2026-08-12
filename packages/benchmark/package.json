@@ -10,9 +10,10 @@
   },
   "scripts": {
     "start": "node bin/benchmark.js",
-    "test": "node --test test/benchmark.test.mjs test/backtest.test.mjs"
+    "test": "node --test"
   },
   "dependencies": {
+    "@faultline/agent": "*",
     "@faultline/core": "*"
   }
 }

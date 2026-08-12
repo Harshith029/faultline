@@ -13,6 +13,6 @@
   "files": ["index.js", "detectionEngine.js", "parseTelemetry.js", "fixtures"],
   "license": "MIT",
   "scripts": {
-    "test": "node --test test/detectionEngine.test.mjs test/parseTelemetry.test.mjs"
+    "test": "node --test"
   }
 }

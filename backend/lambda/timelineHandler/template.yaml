@@ -1,0 +1,235 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Faultline timeline API. Serves precomputed detection windows from DynamoDB,
+  optional live API Gateway telemetry from CloudWatch, and an optional Bedrock
+  explanation layer for the window where detection fired.
+
+  Every account-specific value is a parameter. Nothing here assumes an account
+  id, a region, or a pre-existing resource unless you point it at one.
+
+Parameters:
+  TableName:
+    Type: String
+    Default: Faultline-DriftSignals
+    Description: DynamoDB table holding precomputed detection windows.
+
+  CreateTable:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: >
+      Create the DynamoDB table as part of this stack. Set to 'false' to attach
+      to a table that already exists (it must have the key schema documented in
+      DEPLOY.md).
+
+  BedrockModelId:
+    Type: String
+    Default: ''
+    Description: >
+      Bedrock model id for the explanation layer, e.g.
+      anthropic.claude-3-haiku-20240307-v1:0. Leave empty to disable Bedrock
+      entirely; the handler then always serves the deterministic fallback.
+
+  LiveApiName:
+    Type: String
+    Default: ''
+    Description: >
+      API Gateway ApiName dimension to read live CloudWatch metrics for. Leave
+      empty to disable the ?source=live path.
+
+  ApiAuthMode:
+    Type: String
+    AllowedValues: ['none', 'api-key', 'iam']
+    Description: >
+      REQUIRED — there is deliberately no default, so this cannot be chosen by
+      accident. 'iam' requires SigV4-signed requests. 'api-key' requires an
+      x-api-key header and creates a usage plan with a daily quota. 'none'
+      leaves the API open to the internet: every caller can read your detection
+      history, and if BedrockModelId is set, every caller can also cause billed
+      model invocations. Pick 'none' only for a throwaway public demo with
+      Bedrock disabled. Note that both authenticated modes require the dashboard
+      to sign or key its requests, which it does not do today.
+
+  CorsAllowOrigin:
+    Type: String
+    Default: "'*'"
+    Description: >
+      Origin allowed to call the API. Quote the value, e.g. "'https://app.example.com'".
+      The default of '*' is appropriate for a public read-only demo only.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: CloudWatch Logs retention for the function.
+
+Conditions:
+  ShouldCreateTable: !Equals [!Ref CreateTable, 'true']
+  HasBedrock: !Not [!Equals [!Ref BedrockModelId, '']]
+  HasLiveApi: !Not [!Equals [!Ref LiveApiName, '']]
+  ApiKeyAuth: !Equals [!Ref ApiAuthMode, 'api-key']
+  IamAuth: !Equals [!Ref ApiAuthMode, 'iam']
+
+Globals:
+  Function:
+    # nodejs20.x reached end of support on 2026-04-30; new function creation on
+    # it is disabled from 2027-02-01.
+    Runtime: nodejs22.x
+    Timeout: 10
+    MemorySize: 256
+    Architectures: [arm64]
+
+Resources:
+  DriftSignalsTable:
+    Type: AWS::DynamoDB::Table
+    Condition: ShouldCreateTable
+    # The table holds the detection history the dashboard reads. A stack delete
+    # or a replacing update would otherwise silently take it with them, so it is
+    # kept and must be removed deliberately.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: service_id
+          AttributeType: S
+        - AttributeName: window_number
+          AttributeType: N
+      KeySchema:
+        - AttributeName: service_id
+          KeyType: HASH
+        - AttributeName: window_number
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  TimelineFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    # Logs are reproducible and retention-bounded; removing them with the stack
+    # is intended. Stated explicitly so it reads as a decision, not an oversight.
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-timeline'
+      RetentionInDays: !Ref LogRetentionDays
+
+  TimelineFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-timeline'
+      CodeUri: ./
+      Handler: handler.handler
+      Description: Faultline timeline API handler.
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref TableName
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          LIVE_API_NAME: !Ref LiveApiName
+          NODE_OPTIONS: '--enable-source-maps'
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Sid: ReadDetectionWindows
+              Effect: Allow
+              Action: ['dynamodb:Query']
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${TableName}'
+        - !If
+          - HasBedrock
+          - Version: '2012-10-17'
+            Statement:
+              - Sid: InvokeExplanationModel
+                Effect: Allow
+                Action: ['bedrock:InvokeModel']
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}'
+          - !Ref AWS::NoValue
+        - !If
+          - HasLiveApi
+          # GetMetricData has no resource-level ARN, so it is scoped by the
+          # namespace condition key instead of by resource.
+          - Version: '2012-10-17'
+            Statement:
+              - Sid: ReadLiveApiGatewayMetrics
+                Effect: Allow
+                Action: ['cloudwatch:GetMetricData']
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: 'AWS/ApiGateway'
+          - !Ref AWS::NoValue
+      Events:
+        GetTimeline:
+          Type: Api
+          Properties:
+            RestApiId: !Ref TimelineApi
+            Path: /timeline
+            Method: get
+
+  TimelineApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub '${AWS::StackName}-api'
+      StageName: prod
+      TracingEnabled: true
+      MethodSettings:
+        - ResourcePath: '/*'
+          HttpMethod: '*'
+          ThrottlingBurstLimit: 20
+          ThrottlingRateLimit: 10
+      # Selected by ApiAuthMode, which has no default: a stack cannot be
+      # deployed without someone deciding who may call this API. Throttling
+      # above bounds the blast radius but is not access control — it caps the
+      # rate of unauthenticated Bedrock invocations, it does not prevent them.
+      Auth: !If
+        - ApiKeyAuth
+        - ApiKeyRequired: true
+          UsagePlan:
+            CreateUsagePlan: PER_API
+            Description: !Sub 'Usage plan for ${AWS::StackName} timeline API'
+            Throttle:
+              BurstLimit: 20
+              RateLimit: 10
+            Quota:
+              Limit: 10000
+              Period: DAY
+        - !If
+          - IamAuth
+          - DefaultAuthorizer: AWS_IAM
+          - !Ref AWS::NoValue
+      Cors:
+        AllowOrigin: !Ref CorsAllowOrigin
+        # A SigV4 request carries more than Authorization: browsers preflight
+        # X-Amz-Date, and temporary credentials add X-Amz-Security-Token. Omit
+        # either and ApiAuthMode=iam fails at preflight from a browser, which
+        # looks like a CORS misconfiguration rather than a missing header.
+        AllowHeaders: "'Content-Type,X-Api-Key,Authorization,X-Amz-Date,X-Amz-Security-Token,X-Amz-Content-Sha256'"
+        AllowMethods: "'GET,OPTIONS'"
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the timeline API. Use as VITE_API_URL for the dashboard.
+    Value: !Sub 'https://${TimelineApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/prod'
+
+  FunctionName:
+    Description: Deployed Lambda function name.
+    Value: !Ref TimelineFunction
+
+  TableNameOut:
+    Description: DynamoDB table the handler reads from.
+    Value: !Ref TableName
+
+  ApiAuthModeOut:
+    Description: >
+      Access control in force on the API. 'none' means the endpoint is open to
+      the internet.
+    Value: !Ref ApiAuthMode
+
+  BedrockEnabled:
+    Description: >
+      Whether a Bedrock model is configured. If this is true and ApiAuthModeOut
+      is 'none', unauthenticated callers can cause billed model invocations.
+    Value: !If [HasBedrock, 'true', 'false']

@@ -40,7 +40,15 @@ export function createHttpSource(options = {}, ctx = {}) {
       const samples = rows
         .map((row) => {
           const sample = { service: row[mapping.service], timestamp: row.timestamp ?? timestamp }
-          for (const metric of metrics) sample[metric] = Number(row[mapping[metric]])
+          for (const metric of metrics) {
+            const value = row[mapping[metric]]
+            // Absent or unparseable stays absent. The detector rejects the whole
+            // sample and reports the gap; turning it into NaN-then-zero here
+            // would invent a measurement the endpoint never returned.
+            if (value === undefined || value === null || value === '') continue
+            const numeric = Number(value)
+            if (Number.isFinite(numeric)) sample[metric] = numeric
+          }
           return sample
         })
         .filter((s) => s.service !== undefined && s.service !== null)

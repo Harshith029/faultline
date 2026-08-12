@@ -18,10 +18,20 @@ test('tokens are read from Authorization or X-API-Key', () => {
   assert.equal(extractToken(req()), null)
 })
 
-test('with no token configured the API stays open', () => {
-  const auth = createAuthenticator({}, {})
+test('with no token configured a loopback API stays open', () => {
+  const auth = createAuthenticator({ host: '127.0.0.1' }, {})
   assert.equal(auth.enabled, false)
   assert.equal(auth.authorize(req(), { write: true }), null)
+  assert.equal(auth.authorize(req(), { write: false }), null)
+})
+
+test('with no token configured and no known-loopback host, writes are refused', () => {
+  // An unspecified host is treated as remote. Startup refuses this combination
+  // outright; this is the second line of defence if it is ever bypassed.
+  const auth = createAuthenticator({}, {})
+  assert.equal(auth.enabled, false)
+  assert.equal(auth.authorize(req(), { write: true }).status, 401)
+  assert.equal(auth.authorize(req(), { write: false }), null)
 })
 
 test('a configured token is required for reads and writes', () => {

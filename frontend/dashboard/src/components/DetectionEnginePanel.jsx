@@ -209,7 +209,7 @@ function DetectorComparison({ comparison, totalWindows }) {
 
       <div className="mt-4 border-t border-white/8 pt-3 text-xs text-slate-500">
         The convergence of sustained signals — not any single metric crossing a line — is what lets FAULTLINE
-        flag the cascade before error rate breaches its SLO. Detection stays 100% deterministic math; the AI only explains it.
+        flag the convergence before error rate breaches its SLO. Detection stays 100% deterministic math; any model output only explains it.
       </div>
     </div>
   )

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { OVERRIDABLE } from './serviceConfig.js'
+import { OVERRIDABLE, validateAllProfiles } from './serviceConfig.js'
 import { validateSilence } from './silences.js'
 
 export const DEFAULT_CONFIG = {
@@ -17,6 +17,10 @@ export const DEFAULT_CONFIG = {
     criticalityWeight: 1.0,
     sigmaFloorRatio: 0.1,
     sigmaFloorAbs: null,
+    // How long the agent may observe no valid telemetry before /health reports
+    // degraded. Defaults to five collection intervals, so a single missed
+    // scrape is tolerated but a silent exporter failure is not.
+    noDataGraceSeconds: 300,
     // Any set of numeric metrics your source emits. The engine is agnostic;
     // these three are simply the defaults the reference scenario uses.
     metrics: ['p99_latency', 'retry_rate', 'error_rate'],
@@ -75,6 +79,7 @@ const NUMERIC_RULES = {
   'detector.triggerThreshold': { min: 0 },
   'detector.criticalityWeight': { min: 0 },
   'detector.sigmaFloorRatio': { min: 0 },
+  'detector.noDataGraceSeconds': { min: 0 },
   'alerting.cooldownSeconds': { min: 0 },
   'alerting.resolveAfterWindows': { min: 1, integer: true },
   'server.port': { min: 0, max: 65535, integer: true },
@@ -227,6 +232,14 @@ export function validateConfig(config) {
         errors.push(`silences[${i}] ${problem}`)
       }
     })
+  }
+
+  // Field-level checks above catch malformed values. This resolves every
+  // service profile the agent could actually run under and checks the
+  // cross-field constraints — the ones that produce a detector which starts
+  // cleanly and then never detects anything.
+  if (errors.length === 0) {
+    errors.push(...validateAllProfiles(config, detectorParams(config)))
   }
 
   if (errors.length) {

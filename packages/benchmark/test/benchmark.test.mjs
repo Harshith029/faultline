@@ -1,7 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { generateScenario, scenarioNames, SCENARIOS } from '../src/scenarios.js'
-import { faultlineDetector, singleMetricDetector, staticSloDetector, BENCH_PARAMS, STRICT_PARAMS } from '../src/detectors.js'
+import {
+  faultlineDetector,
+  faultlineRollingDetector,
+  faultlineFixedBaselineDetector,
+  singleMetricDetector,
+  staticSloDetector,
+  BENCH_PARAMS,
+  STRICT_PARAMS,
+  DETECTORS,
+} from '../src/detectors.js'
 import { evaluate, leadTimeComparison } from '../src/evaluate.js'
 
 test('every scenario generates a well-formed series', () => {
@@ -45,11 +54,28 @@ test('a healthy noisy service never triggers', () => {
   }
 })
 
-test('seasonal load never triggers', () => {
+test('seasonal load never triggers the fixed-baseline reference detector', () => {
   for (let seed = 0; seed < 15; seed++) {
     const scenario = generateScenario('seasonal-traffic', 700 + seed)
-    assert.equal(faultlineDetector(scenario.windows).firedAt, null)
+    assert.equal(faultlineFixedBaselineDetector(scenario.windows).firedAt, null)
   }
+})
+
+test('seasonal load is mostly, but not entirely, quiet under the deployed rolling detector', () => {
+  // An honest regression barrier for real behaviour rather than an aspiration.
+  //
+  // The rolling baseline ages, so a slow seasonal climb can eventually sit far
+  // enough above a baseline built from the trough to qualify. The fixed-baseline
+  // reference never sees this because its baseline is pinned to the first
+  // windows of the series forever. This is the deployed detector's actual
+  // weakness on seasonality and the benchmark should show it, not hide it.
+  let fired = 0
+  for (let seed = 0; seed < 15; seed++) {
+    const scenario = generateScenario('seasonal-traffic', 700 + seed)
+    if (faultlineRollingDetector(scenario.windows).firedAt !== null) fired += 1
+  }
+
+  assert.ok(fired <= 2, `seasonal false-positive rate regressed: ${fired}/15 seeds fired`)
 })
 
 test('a lone sustained signal does not page, because convergence is required', () => {
@@ -126,4 +152,43 @@ test('lead time is only counted where both detectors fired', () => {
 test('benchmark params keep sigma floors below the generated noise', () => {
   assert.ok(BENCH_PARAMS.sigmaFloorRatio < 0.1)
   assert.equal(BENCH_PARAMS.minSignals, 2)
+})
+
+test('the default benchmark detector is the agent\'s rolling detector, not the fixed-baseline one', () => {
+  // FL-08: the headline benchmark must gate the code that actually ships.
+  assert.equal(faultlineDetector, faultlineRollingDetector)
+
+  const deployed = DETECTORS.find((d) => d.key === 'faultline')
+  assert.equal(deployed.deployed, true)
+  assert.match(deployed.label, /rolling/)
+
+  const reference = DETECTORS.find((d) => d.key === 'faultline_fixed_baseline')
+  assert.equal(reference.reference, true)
+  assert.match(reference.label, /reference/)
+})
+
+test('the rolling detector cannot see the future: it fires no earlier than its warm-up', () => {
+  const scenario = generateScenario('two-signal-cascade', 4242)
+  const { firedAt } = faultlineRollingDetector(scenario.windows)
+
+  assert.ok(firedAt !== null, 'a labelled cascade must still be detected')
+  // It needs baselineWindows + minSustain samples buffered before it can score.
+  assert.ok(
+    firedAt >= BENCH_PARAMS.baselineWindows + BENCH_PARAMS.minSustain,
+    `fired at ${firedAt}, before enough windows existed to compute a baseline`
+  )
+})
+
+test('rolling and fixed-baseline detectors give measurably different verdicts', () => {
+  // If these ever agreed everywhere, one of them would be redundant — and the
+  // original bug was assuming they agreed.
+  let differences = 0
+  for (let seed = 0; seed < 15; seed++) {
+    const scenario = generateScenario('deploy-step-change', 900 + seed)
+    const rolling = faultlineRollingDetector(scenario.windows).firedAt
+    const fixed = faultlineFixedBaselineDetector(scenario.windows).firedAt
+    if (rolling !== fixed) differences += 1
+  }
+
+  assert.ok(differences > 0, 'the two detectors produced identical results; the benchmark is not measuring the agent')
 })

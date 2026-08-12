@@ -20,9 +20,19 @@
     "agent": "node packages/agent/bin/faultline.js start",
     "agent:demo": "node packages/agent/bin/faultline.js start --config packages/agent/faultline.demo.json",
     "dashboard": "npm run dev --workspace faultline-dashboard",
-    "build": "npm run build --workspace faultline-dashboard"
+    "build": "npm run build --workspace faultline-dashboard",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "audit:all": "node scripts/auditAll.mjs",
+    "lint:iac": "node scripts/lintTemplate.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0"
   }
 }

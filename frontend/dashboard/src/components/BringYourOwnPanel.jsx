@@ -46,7 +46,7 @@ export default function BringYourOwnPanel() {
     : det.outageWindow
       ? { label: `Cascade → outage at W${det.outageWindow.window_number}`, cls: 'border-rose-400/40 bg-rose-500/15 text-rose-200', dot: '#F43F5E' }
       : det.detectionWindow
-        ? { label: `Cascade detected at W${det.detectionWindow.window_number}`, cls: 'border-rose-400/40 bg-rose-500/15 text-rose-200', dot: '#F43F5E' }
+        ? { label: `Convergence detected at W${det.detectionWindow.window_number}`, cls: 'border-rose-400/40 bg-rose-500/15 text-rose-200', dot: '#F43F5E' }
         : { label: 'No cascade detected — nominal', cls: 'border-sky-400/40 bg-sky-500/15 text-sky-200', dot: '#38BDF8' }
 
   return (
