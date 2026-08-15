@@ -3,10 +3,9 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/Harshith029/faultline/security/advisories/new
     about: Report privately. Please do not open a public issue.
-  # Restore this once Discussions is enabled (Settings → General → Features):
-  #   - name: Question or idea
-  #     url: https://github.com/Harshith029/faultline/discussions
-  #     about: Usage questions, tuning help, and proposals.
+  - name: Question or idea
+    url: https://github.com/Harshith029/faultline/discussions
+    about: Usage questions, tuning help, and proposals.
   - name: Detection tuning help
     url: https://github.com/Harshith029/faultline/blob/main/docs/AGENT.md
     about: Thresholds, sigma floors, silences and failure modes are documented here.
