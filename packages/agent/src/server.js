@@ -184,6 +184,11 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
         return json(res, 200, agent.snapshot())
       }
 
+      if (route === 'GET /api/ranking') {
+        const limit = Number(url.searchParams.get('limit') ?? 50)
+        return json(res, 200, agent.ranking({ limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 500) : 50 }))
+      }
+
       if (route === 'GET /api/incidents') {
         const limit = Number(url.searchParams.get('limit') ?? 50)
         return json(res, 200, {

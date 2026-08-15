@@ -477,6 +477,47 @@ export class FaultlineAgent {
    * SIGTERM open until the orchestrator sends SIGKILL, so after the grace
    * period the agent gives up on the in-flight tick and saves what it has.
    */
+  /**
+   * Services ordered by current cascade risk, most at-risk first.
+   *
+   * This is the honest primary use of the tool. Measured against real
+   * production telemetry the detector reaches ~14% precision (docs/BACKTEST.md),
+   * which is poor for waking someone at 3am but genuinely useful for answering
+   * "where should I look first?" — a ranked list costs a glance to be wrong
+   * about, where a page costs a night.
+   *
+   * Services still filling their baseline are returned last with a null score,
+   * never as low risk: "not yet known" and "known to be fine" are different
+   * answers and collapsing them would be a lie of omission.
+   */
+  ranking({ limit = 50 } = {}) {
+    const services = this.snapshot().services
+    const evaluated = services
+      .filter((s) => s.status === 'evaluated')
+      .sort((a, b) => b.R_score - a.R_score)
+    const warming = services.filter((s) => s.status !== 'evaluated')
+
+    const rows = [...evaluated, ...warming].slice(0, limit).map((s, i) => ({
+      rank: i + 1,
+      service: s.service,
+      status: s.status,
+      R_score: s.status === 'evaluated' ? s.R_score : null,
+      signal_count: s.status === 'evaluated' ? s.signal_count : null,
+      qualified_signals: s.qualified_signals ?? [],
+      firing: s.firing,
+      silenced: Boolean(s.silencedBy),
+      profile: s.profile ?? null,
+    }))
+
+    return {
+      generatedAt: new Date().toISOString(),
+      triggerThreshold: this.config.detector.triggerThreshold,
+      evaluated: evaluated.length,
+      warmingUp: warming.length,
+      services: rows,
+    }
+  }
+
   async stop({ graceMs = 5000 } = {}) {
     if (this.stopping) return this.stopping
     this.signalStopRequested()

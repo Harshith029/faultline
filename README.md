@@ -36,6 +36,25 @@ It is a real monitoring agent, not a dashboard: it runs continuously, pulls metr
 
 > **Scope, stated plainly.** FAULTLINE evaluates each service independently against its own history. It has no dependency graph, no distributed tracing, and no deploy-event feed, so it cannot establish that one service caused a problem in another. It tells you *which metrics on a service moved together, and when* — earlier than three separate alerts would. Any cross-service ordering shown in the dashboard comes from the bundled demo scenario and is labelled as sample content. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+### Use it as a ranking signal first
+
+The measured precision on real production telemetry is **~14%** ([docs/BACKTEST.md](docs/BACKTEST.md)) — about six false positives per true one. That is poor for waking someone at 3am and genuinely useful for answering *"where do I look first?"*, because a ranked list costs a glance to be wrong about where a page costs a night.
+
+```bash
+curl localhost:8787/api/ranking
+```
+
+```json
+{ "triggerThreshold": 3, "evaluated": 3, "warmingUp": 0,
+  "services": [
+    { "rank": 1, "service": "checkout-api", "R_score": 7.16, "signal_count": 3, "firing": true },
+    { "rank": 2, "service": "inventory",    "R_score": 0,    "signal_count": 0, "firing": false },
+    { "rank": 3, "service": "payments",     "R_score": 0,    "signal_count": 0, "firing": false }
+  ] }
+```
+
+Services still building a baseline rank last with a `null` score, never as low risk — "not yet known" and "known to be fine" are different answers. Wire the webhook to a pager only once you have tuned against your own traffic and are satisfied with the false-positive rate.
+
 ---
 
 ## See it detect drift in 30 seconds
@@ -56,6 +75,7 @@ The agent starts, streams synthetic telemetry for three services, and ~15 second
 While it runs, the agent is serving a real API:
 
 ```bash
+curl localhost:8787/api/ranking     # services ordered by current risk — start here
 curl localhost:8787/health          # liveness *and* telemetry validity, with freshness
 curl localhost:8787/api/state       # current risk score per service
 curl localhost:8787/api/incidents   # incident history

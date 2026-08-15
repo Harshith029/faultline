@@ -230,6 +230,7 @@ Notifier failures are logged as `notify.failed` and never interrupt detection.
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | Liveness. `503` when collection is failing repeatedly. |
+| `GET /api/ranking` | Services ordered by current risk, highest first. `?limit=` caps the list. |
 | `GET /api/state` | Current risk, signals, and metrics per service. |
 | `GET /api/incidents` | Incident history. Filters: `status`, `service`, `limit`. |
 | `GET /api/incidents/:id` | One incident. |
