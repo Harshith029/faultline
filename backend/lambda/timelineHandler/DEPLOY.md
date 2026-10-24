@@ -56,6 +56,10 @@ npm run lint:iac
 ```
 
 Run from the repository root. It reports which Python interpreter it used.
+Error and warning findings fail the check. Informational findings (cfn-lint's
+I-series rules) are printed as `note:` lines but do not fail it, matching
+cfn-lint's own default — new advisory rules ship regularly and should not break
+the build on their own.
 
 cfn-lint is a Python tool and its console script is often not on `PATH` — pip
 installs it against one interpreter while the shell resolves `python` to another
