@@ -1,3 +1,5 @@
+import { metricMeta } from '@faultline/core'
+
 const METRIC_CONFIG = {
   p99_latency_z: {
     label: 'Latency',
@@ -45,7 +47,7 @@ const getSeverityMeta = (zScore) => {
 
 export default function SignalBadge({ signal, index = 0 }) {
   const config = METRIC_CONFIG[signal.metric] ?? {
-    label: signal.metric,
+    label: metricMeta(String(signal.metric).replace(/_z$/, '')).label,
     color: '#94A3B8',
     gradient: 'linear-gradient(135deg, rgba(148,163,184,0.18), rgba(51,65,85,0.04))',
     accent: 'from-slate-400/14 to-slate-400/0',

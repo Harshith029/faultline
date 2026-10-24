@@ -405,3 +405,62 @@ test('the live query asks CloudWatch for the configured API name only', async ()
     assert.deepEqual(q.MetricStat.Metric.Dimensions, [{ Name: 'ApiName', Value: 'checkout-api' }])
   }
 })
+
+// --- cost controls ----------------------------------------------------------
+
+test('a repeated request for the same timeline reuses the explanation', async () => {
+  const dynamo = fakeClient([{ Items: [triggeredDdbWindow(1)] }, { Items: [triggeredDdbWindow(1)] }])
+  const bedrock = fakeClient([bedrockReply(validGenerated)])
+  let clock = 1_000_000
+  const handler = createHandler({
+    dynamo,
+    bedrock,
+    env: { TABLE_NAME: 't', BEDROCK_MODEL_ID: 'm' },
+    now: () => clock,
+    log: () => {},
+  })
+
+  const first = parse(await handler({ queryStringParameters: { service_id: 'B' } }))
+  clock += 60_000
+  const second = parse(await handler({ queryStringParameters: { service_id: 'B' } }))
+
+  assert.equal(bedrock.sent.length, 1, 'the second page view must not be a second paid model call')
+  assert.equal(first.windows[0].hypothesis.generated_by, 'bedrock')
+  assert.equal(second.windows[0].hypothesis.generated_by, 'bedrock')
+})
+
+test('a cached explanation expires', async () => {
+  const dynamo = fakeClient([{ Items: [triggeredDdbWindow(1)] }, { Items: [triggeredDdbWindow(1)] }])
+  const bedrock = fakeClient([bedrockReply(validGenerated), bedrockReply(validGenerated)])
+  let clock = 1_000_000
+  const handler = createHandler({
+    dynamo,
+    bedrock,
+    env: { TABLE_NAME: 't', BEDROCK_MODEL_ID: 'm', HYPOTHESIS_CACHE_SECONDS: '60' },
+    now: () => clock,
+    log: () => {},
+  })
+
+  await handler({ queryStringParameters: { service_id: 'B' } })
+  clock += 61_000
+  await handler({ queryStringParameters: { service_id: 'B' } })
+  assert.equal(bedrock.sent.length, 2)
+})
+
+test('a Bedrock timeout aborts the underlying request', async () => {
+  const dynamo = fakeClient([{ Items: [triggeredDdbWindow(1)] }])
+  let signal
+  const bedrock = {
+    send: (_command, options) => {
+      signal = options?.abortSignal
+      return new Promise(() => {})
+    },
+  }
+  const handler = createHandler({ dynamo, bedrock, env: { TABLE_NAME: 't', BEDROCK_MODEL_ID: 'm' }, log: () => {} })
+
+  const body = parse(await handler({ queryStringParameters: { service_id: 'B' } }))
+
+  assert.equal(body.windows[0].hypothesis.mechanism, 'deterministic fallback')
+  assert.ok(signal, 'the SDK call must receive an abort signal')
+  assert.equal(signal.aborted, true, 'the timed-out call is cancelled, not left running')
+})

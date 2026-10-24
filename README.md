@@ -10,7 +10,7 @@
   <a href="https://github.com/Harshith029/faultline/actions/workflows/ci.yml"><img src="https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
   <a href="packages/agent/package.json"><img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg" alt="Zero runtime dependencies"></a>
-  <img src="https://img.shields.io/badge/tests-287%20passing-brightgreen.svg" alt="287 tests passing">
+  <img src="https://img.shields.io/badge/tests-327%20passing-brightgreen.svg" alt="327 tests passing">
   <img src="https://img.shields.io/badge/node-%E2%89%A520.19-339933.svg" alt="Node 20.19 or newer">
 </p>
 
@@ -130,6 +130,14 @@ Everything is driven by one config file. Copy [`packages/agent/faultline.config.
 
 Convergence scoring works identically: any two of those drifting together opens an incident.
 
+**Metrics where a fall is the failure.** By default a metric only counts as drifting when it *rises*. Throughput collapsing to zero or a cache hit rate dropping would otherwise be invisible, so say which way is bad:
+
+```json
+{ "detector": { "metrics": ["throughput", "error_rate"], "direction": { "throughput": "down" } } }
+```
+
+`"down"` qualifies a sustained fall, `"both"` either way; unlisted metrics stay `"up"`. Reported z-scores keep their sign, so a chart still shows which way the metric moved.
+
 **Different services, different rules.** A checkout API and a nightly batch job should not share a threshold, so any detector parameter can be overridden per service. Exact names beat wildcards, and the first matching wildcard wins:
 
 ```json
@@ -168,7 +176,9 @@ If an incident opens while muted and is *still firing* when the window ends, it 
 }
 ```
 
-A collection that succeeds but returns nothing is counted as empty, not as a healthy tick, and after `detector.noDataGraceSeconds` (default 300) the agent reports `degraded` with a 503. A previously healthy service that becomes stale also degrades `/health`, even if another service is still reporting. Freshness follows the telemetry sample timestamp rather than collection time, so replayed old samples cannot keep monitoring green. `faultline_telemetry_healthy`, `faultline_seconds_since_data`, `faultline_incomplete_samples_total`, and per-service `faultline_service_stale_seconds` are all exported, so an exporter that quietly stops looks like a problem rather than a quiet night.
+The engine enforces the same rule on its own: `runDetection` throws on a window that lacks a configured metric instead of scoring it as zero, so a library caller or the dashboard cannot reintroduce the coercion by accident.
+
+A collection that succeeds but returns nothing is counted as empty, not as a healthy tick, and after `detector.noDataGraceSeconds` (default 300) the agent reports `degraded` with a 503. A previously healthy service that becomes stale also degrades `/health`, even if another service is still reporting. Freshness follows the time the source says the data was observed — the HTTP source's per-row `timestamp`, CloudWatch's datapoint time — rather than when the agent fetched it, so replayed old samples cannot keep monitoring green. Prometheus instant queries only report their evaluation time, so for that source freshness relies on Prometheus's own staleness handling: a target that stops reporting drops out of the result after the lookback window (5 minutes by default) and the service then goes stale here. `faultline_telemetry_healthy`, `faultline_seconds_since_data`, `faultline_incomplete_samples_total`, and per-service `faultline_service_stale_seconds` are all exported, so an exporter that quietly stops looks like a problem rather than a quiet night.
 
 **The API cannot be exposed unauthenticated.** It is open only when bound to loopback, which is what the quickstart does. Bind it anywhere else without a token and the agent **refuses to start** — `POST /api/silences` and `POST /api/inject` are a control plane, and a startup warning that still serves the request is not a control. Set a token to bind beyond localhost, with a separate read-only scope so Prometheus can scrape metrics without being able to silence your alerts:
 
@@ -178,6 +188,8 @@ export FAULTLINE_READ_TOKEN=$(openssl rand -hex 32)
 ```
 
 `GET /health` stays anonymous so load balancer probes keep working. TLS is built in (`server.tls`) and the agent refuses to start if a configured certificate is unreadable, rather than silently serving plaintext.
+
+**Loopback stops other machines, not other websites.** A page open in your browser can send requests to `127.0.0.1`, so the token-less default defends itself against the browser too: a write carrying a foreign `Origin` header is refused (`403`), creating a silence requires `Content-Type: application/json` (which a page cannot send cross-origin without a preflight), and without a token the agent only answers to a loopback `Host` header, which defeats DNS rebinding. Browser access is off entirely by default (`server.corsOrigin: null`); list an origin explicitly to allow one. curl, scripts and Prometheus send no `Origin` and are unaffected.
 
 **Any HTTP endpoint you already have** — `mapping` renames incoming fields, so an existing internal metrics route usually needs no new code:
 
@@ -253,8 +265,8 @@ Detection alone would page you every window. The agent adds the operational half
 |---|---|
 | One incident per cascade, not one alert per window | Alert fatigue is how monitoring gets ignored |
 | Resolves only after N consecutive clean windows | One good sample mid-incident means nothing |
-| Cooldown after resolution | Stops a flapping service from paging all night |
-| Notifier failures are isolated | A dead webhook must not stop detection |
+| Cooldown after resolution: a re-trigger is recorded but held, and pages only if still firing when the cooldown ends | Stops a flapping service from paging all night without leaving gaps in the history |
+| Notifier failures are isolated and retried | A dead webhook must not stop detection — or silently lose the page. An alert counts as delivered only once every notifier accepted it; failed ones are retried each window while the incident fires, without re-paging the ones that succeeded |
 | Source failures degrade `/health`, don't crash | Monitoring that dies during an outage is worthless |
 | Restarts resume instead of re-warming | A rolling deploy shouldn't blind you for 12 minutes, or re-page an incident you already know about |
 
@@ -270,7 +282,7 @@ Two answers, and the honest one is second.
 
 ### On real production telemetry
 
-`npm run backtest` replays the [Server Machine Dataset](https://github.com/NetManAIOps/OmniAnomaly) — 28 days of real server telemetry, 38 channels per machine, incidents labelled by the operators who ran the systems. Detection is replayed causally (no detector sees the future) across 41 labelled incidents on 4 machines, using **all 38 channels with no hand-picking**.
+`npm run backtest` replays the [Server Machine Dataset](https://github.com/NetManAIOps/OmniAnomaly) — 16–20 days of real one-minute server telemetry per machine (the labelled test split, ~69 machine-days in total), 38 channels per machine, incidents labelled by the operators who ran the systems. Detection is replayed causally (no detector sees the future) across 41 labelled incidents on 4 machines, using **all 38 channels with no hand-picking**.
 
 | Detector | Precision | Recall | F1 | False alerts |
 |---|---:|---:|---:|---:|
@@ -311,7 +323,7 @@ The honest caveats, straight from the same run:
 
 - **A blip that lasts exactly `minSustain` windows still fires** on the default profile (`transient-multi-spike`, 100%). The strict profile (`minSustain: 3`) drops that to 0% and is what you should run in noisy environments — it costs about one window of delay.
 - **A permanent step change still alerts** (`deploy-step-change`, 100%). With a fixed baseline this is mathematically indistinguishable from a real cascade. The agent's rolling baseline absorbs it over time, but you will get an alert first. Arguably correct — a deploy that permanently moves all three metrics is worth knowing about — but it is a false positive against the label, so it is reported as one.
-- **Sustained 3σ fires ~2 windows earlier** than FAULTLINE and catches everything too. It is simply far noisier (59.2% vs 83.3% precision). Speed is not free.
+- **Sustained 3σ fires ~2 windows earlier** than FAULTLINE and catches everything too. It is simply far noisier (59.2% vs 82.6% precision for the strict profile). Speed is not free.
 
 ## Use it as a library
 
@@ -324,6 +336,8 @@ const result = runDetection(windows)  // [{ window_number, p99_latency, retry_ra
 result.detectionWindow                // first window where R crossed the threshold
 compareDetectors(result)              // lead time vs static-SLO and single-metric detectors
 ```
+
+Every window must carry a finite value for every metric in `params.metrics`; an incomplete window throws rather than being scored as zero. The library default is a 4-window baseline, sized for the 12-window reference scenario — pass `baselineWindows` (the agent uses 10) for real data, because a standard deviation estimated from four points is very noisy.
 
 ---
 
@@ -355,7 +369,11 @@ An incident-analysis UI over the same engine: scrub a cascade window by window, 
 | `detector.minSustain` | `2` | Consecutive windows required to qualify |
 | `detector.triggerThreshold` | `3.0` | R at which an incident opens |
 | `detector.sigmaFloorAbs` | `null` | Per-metric minimum sigma; stops quiet baselines inflating z |
-| `alerting.cooldownSeconds` | `300` | Suppress re-opening after resolution |
+| `detector.direction` | `null` | Per-metric bad direction: `up` (default), `down`, `both` |
+| `detector.statistic` | `mean_sigma` | `median_mad` for robust baseline statistics |
+| `detector.maxServices` | `1000` | Distinct services tracked; new ones beyond it are refused, counted, and degrade `/health` |
+| `server.corsOrigin` | `null` | Browser origins allowed to read the API; browser writes need an origin listed explicitly |
+| `alerting.cooldownSeconds` | `300` | Hold paging for a re-trigger after resolution (still recorded) |
 | `alerting.resolveAfterWindows` | `3` | Clean windows required to resolve |
 | `server.port` | `8787` | HTTP API |
 
@@ -378,7 +396,7 @@ docs/               architecture and operations
 ## Testing
 
 ```bash
-npm test              # 264 tests across engine, agent, benchmark, dashboard
+npm test              # engine, agent, benchmark and dashboard suites (the Lambda runs its own)
 npm run verify:engine # reference cascade assertion
 npm run benchmark     # synthetic precision/recall/lead time vs baselines
 npm run fetch:dataset # download the Server Machine Dataset (not vendored)

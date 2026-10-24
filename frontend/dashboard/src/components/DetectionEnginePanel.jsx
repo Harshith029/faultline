@@ -1,8 +1,9 @@
-import { METRIC_META } from '@faultline/core'
-
-const METRIC_ORDER = ['p99_latency', 'retry_rate', 'error_rate']
+import { DEFAULT_PARAMS, metricMeta } from '@faultline/core'
 
 const fmt = (x, n = 2) => Number(x).toFixed(n)
+
+// Millisecond-scale metrics read better as integers; rates keep two decimals.
+const digitsFor = (key) => (metricMeta(key).unit === 'ms' ? 0 : 2)
 
 export default function DetectionEnginePanel({ engine, activeWindow, comparison, params }) {
   const w = engine.windows[activeWindow - 1]
@@ -52,8 +53,8 @@ export default function DetectionEnginePanel({ engine, activeWindow, comparison,
           <span>z = (x − μ) / σ</span>
           <span className="text-right">Status</span>
         </div>
-        {METRIC_ORDER.map((key) => {
-          const meta = METRIC_META[key]
+        {(params.metrics ?? DEFAULT_PARAMS.metrics).map((key) => {
+          const meta = metricMeta(key)
           const base = engine.baselines[key]
           const raw = w.raw[key]
           const z = w.metrics[meta.zKey]
@@ -78,11 +79,11 @@ export default function DetectionEnginePanel({ engine, activeWindow, comparison,
             >
               <span className="font-medium text-slate-200">{meta.label}</span>
               <span className="font-mono text-slate-300">
-                {fmt(raw, key === 'p99_latency' ? 0 : 2)}
+                {fmt(raw, digitsFor(key))}
                 <span className="ml-0.5 text-[11px] text-slate-500">{meta.unit}</span>
               </span>
               <span className="font-mono text-xs text-slate-400">
-                ({fmt(raw, key === 'p99_latency' ? 0 : 2)} − {fmt(base.mean, key === 'p99_latency' ? 0 : 2)}) / {fmt(base.sigma, 2)} ={' '}
+                ({fmt(raw, digitsFor(key))} − {fmt(base.mean, digitsFor(key))}) / {fmt(base.sigma, 2)} ={' '}
                 <span className={`font-semibold ${tone}`}>{fmt(z)}σ</span>
               </span>
               <span className={`text-right text-xs font-medium ${tone}`}>{statusLabel}</span>

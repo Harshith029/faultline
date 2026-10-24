@@ -10,6 +10,7 @@ const STATUS_STYLE = {
   averted: { ring: 'ring-emerald-400/40', bg: 'bg-emerald-500/10', text: 'text-emerald-200', dot: '#34D399', line: '#34D399' },
   mitigated: { ring: 'ring-amber-400/40', bg: 'bg-amber-500/10', text: 'text-amber-200', dot: '#F59E0B', line: '#F59E0B' },
   failed: { ring: 'ring-rose-400/40', bg: 'bg-rose-500/10', text: 'text-rose-200', dot: '#F43F5E', line: '#F43F5E' },
+  no_incident: { ring: 'ring-slate-400/40', bg: 'bg-slate-500/10', text: 'text-slate-200', dot: '#94A3B8', line: '#94A3B8' },
 }
 
 export default function CounterfactualPanel({ raw, engine, params }) {
@@ -41,8 +42,10 @@ export default function CounterfactualPanel({ raw, engine, params }) {
             Rewind the incident and intervene
           </div>
           <div className="mt-2 max-w-2xl text-sm text-slate-400">
-            Apply a mitigation at a chosen window. The same deterministic engine re-runs on the recovered
-            telemetry — so the averted outcome is computed math, not a scripted replay.
+            Apply a mitigation at a chosen window. The recovery curve is a modelled assumption — each
+            mitigation decays every metric toward its baseline at a fixed, hand-chosen rate, not one learned
+            from real incidents. The same deterministic engine then re-scores that telemetry, so the verdict
+            is computed from the assumption, not scripted.
           </div>
         </div>
         <div className={`inline-flex items-center gap-2 self-start rounded-full px-4 py-2 text-sm font-medium ring-1 ${style.bg} ${style.text} ${style.ring}`}>

@@ -4,6 +4,8 @@
  * `retry_rate` asserted a client-behaviour story the metric cannot support.
  * If you have a real retry counter, map it explicitly via `options.metrics`.
  */
+import { configuredMetrics } from './metrics.js'
+
 const DEFAULT_METRICS = {
   p99_latency: { metricName: 'Latency', stat: 'p99' },
   client_error_rate: { metricName: '4XXError', stat: 'Average', scale: 100 },
@@ -37,13 +39,9 @@ export function createCloudWatchSource(options = {}, ctx = {}) {
   // effective possibilities too: validating only detector.metrics lets a
   // custom per-service metric pass startup and then reject every sample for
   // that service indefinitely.
-  const wanted = new Set(ctx.config?.detector?.metrics ?? [])
-  for (const rule of ctx.config?.services ?? []) {
-    if (!Array.isArray(rule?.metrics)) continue
-    for (const metric of rule.metrics) wanted.add(metric)
-  }
-  if (wanted.size > 0) {
-    const unsupplied = [...wanted].filter((m) => !(m in metrics))
+  const wanted = configuredMetrics(ctx.config)
+  if (wanted) {
+    const unsupplied = wanted.filter((m) => !(m in metrics))
     if (unsupplied.length > 0) {
       throw new Error(
         `cloudwatch source cannot supply configured metrics [${unsupplied.join(', ')}]. ` +
@@ -128,13 +126,17 @@ export function createCloudWatchSource(options = {}, ctx = {}) {
         })
       )
 
-      const timestamp = new Date().toISOString()
+      const receivedAt = new Date().toISOString()
       const byService = new Map()
+      // Oldest datapoint time per service. The sample is only as fresh as its
+      // stalest metric, and freshness must describe when CloudWatch observed
+      // the data — not when the agent happened to ask for it.
+      const observedAt = new Map()
       for (const result of response.MetricDataResults ?? []) {
         const meta = idMap.get(result.Id)
         if (!meta) continue
         if (!byService.has(meta.service)) {
-          byService.set(meta.service, { service: meta.service, timestamp })
+          byService.set(meta.service, { service: meta.service, timestamp: receivedAt })
         }
         // Most recent datapoint; CloudWatch can lag a period behind. A period
         // with no datapoint is left absent rather than set to zero — CloudWatch
@@ -143,7 +145,14 @@ export function createCloudWatchSource(options = {}, ctx = {}) {
         const value = result.Values?.[0]
         if (Number.isFinite(value)) {
           byService.get(meta.service)[meta.metric] = value * meta.scale
+          const at = new Date(result.Timestamps?.[0] ?? Number.NaN).getTime()
+          if (Number.isFinite(at)) {
+            observedAt.set(meta.service, Math.min(observedAt.get(meta.service) ?? at, at))
+          }
         }
+      }
+      for (const [service, at] of observedAt) {
+        byService.get(service).timestamp = new Date(at).toISOString()
       }
 
       logger?.debug('source.cloudwatch_collected', { services: byService.size })

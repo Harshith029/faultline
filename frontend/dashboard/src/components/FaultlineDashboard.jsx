@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { fetchTimeline, fetchLiveTelemetry } from '../timelineApi'
 import { runDetection, compareDetectors, DEFAULT_PARAMS } from '@faultline/core'
 import { RAW_TELEMETRY } from '@faultline/core'
+import { liveParamsFor } from '../lib/liveTelemetry'
 import MetadataBar from './MetadataBar'
 import TimelineScrubber from './TimelineScrubber'
 import DetectionEnginePanel from './DetectionEnginePanel'
@@ -40,26 +41,23 @@ const SAMPLE_HYPOTHESIS = {
   ],
 }
 
-const LIVE_PARAMS = {
-  ...DEFAULT_PARAMS,
-  sigmaFloorAbs: { p99_latency: 100, retry_rate: 2, error_rate: 2 },
-}
-
 export default function FaultlineDashboard() {
   const [mode, setMode] = useState('scenario')
   const [activeWindow, setActiveWindow] = useState(1)
   const [apiHypothesis, setApiHypothesis] = useState(null)
   const [liveRaw, setLiveRaw] = useState(null)
+  const [liveParams, setLiveParams] = useState(null)
   const [liveLoading, setLiveLoading] = useState(false)
   const [liveError, setLiveError] = useState(null)
 
   const liveAvailable = Boolean(import.meta.env.VITE_API_URL)
-  const isLive = mode === 'live' && Array.isArray(liveRaw) && liveRaw.length > 0
+  const isLive = mode === 'live' && Array.isArray(liveRaw) && liveRaw.length > 0 && liveParams !== null
 
   const engine = useMemo(
-    () => (isLive ? runDetection(liveRaw, LIVE_PARAMS) : runDetection(RAW_TELEMETRY)),
-    [isLive, liveRaw]
+    () => (isLive ? runDetection(liveRaw, liveParams) : runDetection(RAW_TELEMETRY)),
+    [isLive, liveRaw, liveParams]
   )
+  const scoredMetrics = engine.params.metrics ?? DEFAULT_PARAMS.metrics
   const comparison = useMemo(() => compareDetectors(engine), [engine])
   const windows = engine.windows
 
@@ -81,7 +79,12 @@ export default function FaultlineDashboard() {
         if (!Array.isArray(data?.raw) || data.raw.length === 0) {
           throw new Error('no live telemetry returned')
         }
+        const params = liveParamsFor(data)
+        // Fails here, with a readable message, if the rows do not carry every
+        // metric the response declared — instead of crashing the render.
+        runDetection(data.raw, params)
         setLiveRaw(data.raw)
+        setLiveParams(params)
         setMode('live')
         setActiveWindow(data.raw.length)
       })
@@ -134,7 +137,7 @@ export default function FaultlineDashboard() {
                 </div>
                 <div className="mt-2 text-sm text-slate-400">
                   {isLive
-                    ? 'Real CloudWatch telemetry from the configured API Gateway, one-minute windows over the last hour. Retry pressure is proxied by the 4XX client-error rate. Detection runs live in your browser.'
+                    ? 'Real CloudWatch telemetry from the configured API Gateway, one-minute windows over the last hour: p99 latency, the 4XX client-error rate (all client-side errors — not a retry count) and the 5XX error rate. Detection runs live in your browser.'
                     : 'Curated 12-window cascade scenario. Switch to live mode to run the same engine on real production telemetry.'}
                 </div>
               </div>
@@ -183,6 +186,7 @@ export default function FaultlineDashboard() {
           <DriftChart
             windows={windows}
             activeWindow={activeWindow}
+            metrics={scoredMetrics}
           />
         </section>
 
@@ -266,6 +270,7 @@ export default function FaultlineDashboard() {
             <SignalConvergenceHeatmap
               windows={windows}
               activeWindow={activeWindow}
+              metrics={scoredMetrics}
             />
           </div>
         </section>

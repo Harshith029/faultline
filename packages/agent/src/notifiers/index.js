@@ -79,24 +79,45 @@ function fileNotifier(config) {
 
 const BUILDERS = { stdout: stdoutNotifier, webhook: webhookNotifier, file: fileNotifier }
 
+/**
+ * Fans an event out to every configured sink and reports, per sink, whether it
+ * was delivered.
+ *
+ * Each sink has a stable `key` (its position and type in the config) so the
+ * agent can record which sinks already received an incident and retry only the
+ * ones that failed. Retrying everything would re-page every channel that did
+ * receive it; retrying nothing would lose the page on the channel that did not.
+ */
 export function createNotifiers(configs = [], ctx) {
-  const sinks = configs.map((config) => BUILDERS[config.type](config, ctx))
+  const sinks = configs.map((config, i) => ({ key: `${i}:${config.type}`, ...BUILDERS[config.type](config, ctx) }))
 
   return {
     types: sinks.map((s) => s.type),
-    async notify(event) {
-      const results = await Promise.allSettled(sinks.map((sink) => sink.send(event)))
+    keys: sinks.map((s) => s.key),
+
+    /**
+     * `skip` excludes sinks that already have this event; `only` restricts
+     * delivery to the listed sinks. Returns `{ delivered, failed }` as sink keys.
+     */
+    async notify(event, { skip = [], only = null } = {}) {
+      const targets = sinks.filter((sink) => (only ? only.includes(sink.key) : !skip.includes(sink.key)))
+      const results = await Promise.allSettled(targets.map((sink) => sink.send(event)))
+      const delivered = []
+      const failed = []
       results.forEach((result, i) => {
-        if (result.status === 'rejected') {
-          // A failing notifier must never take the agent down or block detection.
-          ctx.logger.error('notify.failed', {
-            notifier: sinks[i].type,
-            incident: event.incident?.id,
-            message: result.reason?.message ?? String(result.reason),
-          })
+        if (result.status === 'fulfilled') {
+          delivered.push(targets[i].key)
+          return
         }
+        failed.push(targets[i].key)
+        // A failing notifier must never take the agent down or block detection.
+        ctx.logger.error('notify.failed', {
+          notifier: targets[i].type,
+          incident: event.incident?.id,
+          message: result.reason?.message ?? String(result.reason),
+        })
       })
-      return results
+      return { delivered, failed }
     },
   }
 }

@@ -1,5 +1,6 @@
 export {
   DEFAULT_PARAMS,
+  DIRECTIONS,
   METRIC_META,
   metricMeta,
   MITIGATIONS,

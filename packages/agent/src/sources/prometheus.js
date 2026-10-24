@@ -1,3 +1,5 @@
+import { configuredMetrics } from './metrics.js'
+
 const DEFAULT_QUERIES = {
   p99_latency:
     'histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[1m])) by (le, service)) * 1000',
@@ -14,7 +16,22 @@ const DEFAULT_QUERIES = {
  */
 export function createPrometheusSource(options = {}, ctx = {}) {
   const baseUrl = (options.url ?? 'http://localhost:9090').replace(/\/+$/, '')
-  const queries = { ...DEFAULT_QUERIES, ...(options.queries ?? {}) }
+  const available = { ...DEFAULT_QUERIES, ...(options.queries ?? {}) }
+
+  // Query only what the detector will use, and refuse to start if a configured
+  // metric has no query: otherwise every sample is incomplete and the agent
+  // runs blind while the default queries keep hitting Prometheus for nothing.
+  const wanted = configuredMetrics(ctx.config)
+  if (wanted) {
+    const unsupplied = wanted.filter((metric) => !(metric in available))
+    if (unsupplied.length > 0) {
+      throw new Error(
+        `prometheus source has no query for configured metrics [${unsupplied.join(', ')}]. ` +
+          'Add a PromQL expression for each under source.options.queries.'
+      )
+    }
+  }
+  const queries = wanted ? Object.fromEntries(wanted.map((metric) => [metric, available[metric]])) : available
   const serviceLabel = options.serviceLabel ?? 'service'
   const timeoutMs = options.timeoutMs ?? 10000
   const headers = options.headers ?? {}
@@ -38,6 +55,11 @@ export function createPrometheusSource(options = {}, ctx = {}) {
     name: 'prometheus',
 
     async collect() {
+      // An instant query's result timestamp is the evaluation time, not when
+      // the series was last scraped, so it says nothing about freshness. A
+      // series whose target stopped reporting drops out of the result after
+      // Prometheus's lookback window (5 minutes by default) and the service
+      // then goes stale here, so the receipt time is the honest stamp.
       const timestamp = new Date().toISOString()
       const byService = new Map()
 
