@@ -233,18 +233,26 @@ const explainWithBedrock = async ({ bedrock, InvokeModel, env, window, timeoutMs
     messages: [{ role: 'user', content: buildPrompt(window) }],
   }
 
+  // Racing a timer alone only stops *waiting*: the request keeps running, and
+  // can keep billing, after the handler has already answered. Aborting the
+  // signal cancels the underlying HTTP call too.
+  const controller = new AbortController()
   const call = bedrock.send(
     new InvokeModel({
       modelId: env.BEDROCK_MODEL_ID,
       contentType: 'application/json',
       accept: 'application/json',
       body: new TextEncoder().encode(JSON.stringify(promptPayload)),
-    })
+    }),
+    { abortSignal: controller.signal }
   )
 
   let timerId
   const timeout = new Promise((_, reject) => {
-    timerId = setTimeout(() => reject(new Error('Bedrock timeout')), timeoutMs)
+    timerId = setTimeout(() => {
+      controller.abort()
+      reject(new Error('Bedrock timeout'))
+    }, timeoutMs)
   })
 
   try {
@@ -299,6 +307,29 @@ export function createHandler({
   const Query = commands.QueryCommand ?? QueryCommand
   const InvokeModel = commands.InvokeModelCommand ?? InvokeModelCommand
   const GetMetricData = commands.GetMetricDataCommand ?? GetMetricDataCommand
+
+  // The timeline for a service is precomputed and does not change between
+  // requests, so neither does its explanation. Without a cache every page view
+  // is a paid model call. Successes are kept for HYPOTHESIS_CACHE_SECONDS;
+  // failures briefly, so a broken model does not get called in a hot loop.
+  // Scope is one warm Lambda container, which is the cheap, honest bound.
+  const cache = new Map()
+  const MAX_CACHE_ENTRIES = 100
+  const successTtlMs = (Number(env.HYPOTHESIS_CACHE_SECONDS) || 900) * 1000
+  const failureTtlMs = 60 * 1000
+
+  const explainCached = async (window) => {
+    const key = `${window.service_id}:${window.window_number}:${env.BEDROCK_MODEL_ID}`
+    const hit = cache.get(key)
+    if (hit && hit.expiresAt > now()) return { ...hit.outcome, cached: true }
+
+    const outcome = await explainWithBedrock({ bedrock, InvokeModel, env, window })
+    cache.delete(key)
+    cache.set(key, { outcome, expiresAt: now() + (outcome.ok ? successTtlMs : failureTtlMs) })
+    // Maps iterate in insertion order, so the first key is the oldest entry.
+    if (cache.size > MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value)
+    return outcome
+  }
 
   return async (event = {}) => {
     const params = event.queryStringParameters ?? {}
@@ -367,23 +398,23 @@ export function createHandler({
       return json(200, { service_id: serviceId, windows, meta })
     }
 
-    const outcome = await explainWithBedrock({
-      bedrock,
-      InvokeModel,
-      env,
-      window: triggeredWindow,
-    })
+    const outcome = await explainCached(triggeredWindow)
 
     if (outcome.ok) {
       windows[triggeredIndex].hypothesis = outcome.hypothesis
       log({
         event: 'BEDROCK_RESPONSE',
-        status: 'hypothesis_generated',
+        status: outcome.cached ? 'hypothesis_cached' : 'hypothesis_generated',
         window: triggeredWindow.window_number,
       })
     } else {
       windows[triggeredIndex].hypothesis = triggeredWindow.hypothesis_fallback
-      log({ event: 'FALLBACK_ACTIVATED', reason: outcome.reason, window: triggeredWindow.window_number })
+      log({
+        event: 'FALLBACK_ACTIVATED',
+        reason: outcome.reason,
+        cached: Boolean(outcome.cached),
+        window: triggeredWindow.window_number,
+      })
     }
 
     return json(200, { service_id: serviceId, windows, meta })

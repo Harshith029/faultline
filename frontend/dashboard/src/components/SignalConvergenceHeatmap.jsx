@@ -1,8 +1,14 @@
-const METRICS = [
-  { key: 'p99_latency_z', label: 'P99 Latency', color: '#3b82f6' },
-  { key: 'retry_rate_z', label: 'Retry Rate', color: '#f59e0b' },
-  { key: 'error_rate_z', label: 'Error Rate', color: '#ef4444' },
-]
+import { DEFAULT_PARAMS, metricMeta } from '@faultline/core'
+
+const ROW_COLORS = ['#3b82f6', '#f59e0b', '#ef4444', '#22c55e', '#a855f7', '#14b8a6']
+
+// One row per metric the engine scored, whatever those metrics are.
+const rowsFor = (metrics) =>
+  metrics.map((metric, i) => ({
+    key: metricMeta(metric).zKey,
+    label: metricMeta(metric).label,
+    color: ROW_COLORS[i % ROW_COLORS.length],
+  }))
 
 const getHeatColor = (z) => {
   if (z >= 7.0) return '#7f1d1d'
@@ -16,7 +22,8 @@ const getHeatColor = (z) => {
 const isQualified = (window, metricKey) =>
   window.qualified_signals?.some((signal) => signal.metric === metricKey) ?? false
 
-export default function SignalConvergenceHeatmap({ windows, activeWindow }) {
+export default function SignalConvergenceHeatmap({ windows, activeWindow, metrics = DEFAULT_PARAMS.metrics }) {
+  const METRICS = rowsFor(metrics)
   const activeSignals =
     windows.find((window) => window.window_number === activeWindow)?.qualified_signals?.length ?? 0
 

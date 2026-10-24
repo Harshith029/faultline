@@ -57,8 +57,12 @@ nothing in the engine is tied to them:
 }
 ```
 
-Your source must emit a numeric field per metric name; missing or non-numeric
-values coerce to 0 rather than throwing.
+Your source must emit a numeric field per metric name. A sample with any
+configured metric missing or non-numeric is rejected and counted
+(`faultline_incomplete_samples_total`), never coerced to 0 — a zero is a
+measurement, and inventing one would turn lost telemetry into perfect health.
+The Prometheus and CloudWatch sources refuse to start if they cannot supply a
+configured metric, including ones introduced by a per-service rule.
 
 Two rules make a metric set work well:
 
@@ -67,10 +71,17 @@ Two rules make a metric set work well:
    of one another (p95 and p99 latency) inflate the signal count without adding
    evidence. A saturation metric, a work-backlog metric, and an outcome metric is
    a strong trio.
-2. **Every metric should be "higher is worse."** Detection is one-sided: only
-   upward drift qualifies. If a metric fails by dropping — cache hit rate,
-   throughput, success rate — invert it at the source (`100 - hit_rate`) so a
-   degradation reads as an increase.
+2. **Say which way is bad.** By default only upward drift qualifies. If a
+   metric fails by dropping — cache hit rate, throughput, success rate — set
+   its direction so a sustained fall counts:
+
+   ```json
+   "direction": { "throughput": "down", "cache_hit_rate": "down" }
+   ```
+
+   `"both"` qualifies movement either way. Direction can also be overridden
+   per service. Qualified signals for non-default directions carry a
+   `direction` field, and reported z-scores keep their sign.
 
 `minSignals` (default 2) is the convergence requirement and cannot exceed the
 number of metrics configured. With a single metric you must set it to 1, which
@@ -180,7 +191,7 @@ Start with the defaults and one week of observation, then adjust:
 
 **Too many alerts** — raise `minSustain` from 2 to 3 first. On the benchmark
 suite (`npm run benchmark`) that single change moves precision from 69.4% to
-83.3% while recall stays at 100%, at a cost of roughly one window of extra
+82.6% while recall stays at 100%, at a cost of roughly two windows of extra
 delay. It is the highest-value knob by a wide margin, because a blip lasting
 exactly `minSustain` windows is otherwise indistinguishable from the start of a
 real cascade. Raising `triggerThreshold` or `zThreshold` also works but blunts
@@ -224,6 +235,26 @@ common source of false positives when omitted.
 - `file` — appends JSONL. Useful for shipping into a log pipeline.
 
 Notifier failures are logged as `notify.failed` and never interrupt detection.
+They are also never mistaken for delivery:
+
+- `incident.notifiedAt` is set only once **every** notifier accepted the open.
+- `incident.deliveredTo` lists the notifiers that did (as `index:type`, e.g.
+  `1:webhook`). While the incident keeps firing, each window retries only the
+  ones missing from that list, so a webhook that was down pages when it comes
+  back and the channels that already have the alert are not paged twice. A
+  partial delivery is logged as `incident.delivery_incomplete`.
+- A resolve goes only to the notifiers that received the open.
+
+If an incident resolves before a failed notifier recovers, that notifier never
+hears about it — the incident record and the logs still show it.
+
+## Cooldown
+
+After an incident resolves, `alerting.cooldownSeconds` holds paging for a
+re-trigger on the same service. The re-trigger is still opened and recorded —
+marked with `heldUntil` — so a flapping service leaves a complete history. It
+pages only if it is still firing once the cooldown ends; if it resolves inside
+the cooldown, nobody is woken for it.
 
 ## HTTP API
 
@@ -243,9 +274,25 @@ Notifier failures are logged as `notify.failed` and never interrupt detection.
 
 ### Authentication
 
-The API defaults to open, which is fine on localhost and unacceptable anywhere
-else — it can create silences and therefore suppress your alerting. Set a token
-and it is enforced:
+The API defaults to open, which is acceptable only on localhost — it can create
+silences and therefore suppress your alerting — and the agent refuses to bind
+anywhere else without a token.
+
+Localhost is not the same as safe: a web page open in the operator's browser
+can send requests to `127.0.0.1`. So the token-less agent also:
+
+- refuses any write that carries an `Origin` header not listed in
+  `server.corsOrigin` (browsers attach one to every cross-origin POST/DELETE,
+  including "simple" requests they send without a preflight);
+- requires `Content-Type: application/json` to create a silence, so a page
+  cannot send one cross-origin without a preflight it will fail;
+- answers only to a loopback `Host` header (`localhost`, `127.0.0.1`, `[::1]`),
+  which defeats DNS rebinding — a hostile domain re-pointed at 127.0.0.1;
+- sends no CORS headers unless `server.corsOrigin` is set. `"*"` allows any
+  origin to *read*; browser *writes* always need an origin listed explicitly.
+
+curl, scripts and Prometheus send no `Origin` header and are unaffected. Set a
+token and it is enforced:
 
 ```bash
 export FAULTLINE_API_TOKEN=$(openssl rand -hex 32)     # read + write
@@ -384,6 +431,10 @@ deployments with different `source` scopes instead.
 | `agent.tick_skipped` | Collection is slower than the interval | Raise `intervalSeconds` or narrow the queries |
 | Alerts on a quiet service | Baseline variance near zero | Set `sigmaFloorAbs` |
 | Long incident self-resolves while still broken | Incident absorbed into its rolling baseline | Raise `historyWindows` |
+| `incident.delivery_incomplete` | A notifier rejected or timed out on the alert | Check the `notify.failed` log for that notifier; it is retried each window while the incident fires |
+| `/health` reason `service_capacity_exceeded` | More distinct services than `detector.maxServices` | Usually a high-cardinality `service` label (a pod or request id); fix the label, or raise the cap deliberately |
+| API returns `421` | Token-less agent reached with a non-loopback `Host` header | Use `localhost`/`127.0.0.1`, or set a token |
+| API write returns `403 cross-origin write refused` | A browser page on another origin tried to write | Expected for untrusted pages; list a trusted origin in `server.corsOrigin` |
 
 ## Security
 

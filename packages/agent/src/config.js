@@ -24,6 +24,17 @@ export const DEFAULT_CONFIG = {
     // Any set of numeric metrics your source emits. The engine is agnostic;
     // these three are simply the defaults the reference scenario uses.
     metrics: ['p99_latency', 'retry_rate', 'error_rate'],
+    // Per-metric bad direction: { "throughput": "down" }. Unlisted metrics are
+    // 'up' — a rise is the problem.
+    direction: null,
+    // 'mean_sigma' or 'median_mad' (robust baseline statistics).
+    statistic: 'mean_sigma',
+    // Per-metric sigma threshold, overriding zThreshold for listed metrics.
+    zThresholdPerMetric: null,
+    // Upper bound on distinct services tracked. Each one costs a rolling buffer
+    // and incident state, so a mislabelled exporter (a request id in the
+    // service label) must not be able to grow the agent without limit.
+    maxServices: 1000,
   },
   // Per-service overrides. Each entry needs a `match` (exact name or glob) and
   // may override any detector parameter for the services it matches.
@@ -40,7 +51,9 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     host: '127.0.0.1',
     port: 8787,
-    corsOrigin: '*',
+    // Browser origins allowed to read the API: null (none), "*", an origin, or
+    // a list of origins. Browser writes need an origin listed explicitly.
+    corsOrigin: null,
     // Tokens come from the environment so a committed config never holds one.
     auth: { tokenEnv: 'FAULTLINE_API_TOKEN', readOnlyTokenEnv: 'FAULTLINE_READ_TOKEN', allowAnonymousRead: false },
     tls: null,
@@ -80,6 +93,7 @@ const NUMERIC_RULES = {
   'detector.criticalityWeight': { min: 0 },
   'detector.sigmaFloorRatio': { min: 0 },
   'detector.noDataGraceSeconds': { min: 0 },
+  'detector.maxServices': { min: 1, integer: true },
   'alerting.cooldownSeconds': { min: 0 },
   'alerting.resolveAfterWindows': { min: 1, integer: true },
   'server.port': { min: 0, max: 65535, integer: true },
@@ -210,6 +224,14 @@ export function validateConfig(config) {
     }
   }
 
+  const corsOrigin = config.server?.corsOrigin
+  if (corsOrigin != null) {
+    const list = Array.isArray(corsOrigin) ? corsOrigin : [corsOrigin]
+    if (list.length === 0 || list.some((o) => typeof o !== 'string' || o.trim() === '')) {
+      errors.push('server.corsOrigin must be null, "*", an origin string, or a non-empty array of origin strings')
+    }
+  }
+
   const auth = config.server?.auth
   if (auth != null && !isPlainObject(auth)) {
     errors.push('server.auth must be an object, or null')
@@ -313,6 +335,9 @@ export function detectorParams(config) {
     sigmaFloorAbs: d.sigmaFloorAbs ?? undefined,
     criticalityWeight: d.criticalityWeight,
     triggerThreshold: d.triggerThreshold,
+    statistic: d.statistic ?? 'mean_sigma',
+    zThresholdPerMetric: d.zThresholdPerMetric ?? undefined,
+    direction: d.direction ?? undefined,
     // The agent alerts on the trigger threshold; "outage" is a scenario-only
     // concept, so it is pinned above any reachable score here.
     outageThreshold: Number.POSITIVE_INFINITY,

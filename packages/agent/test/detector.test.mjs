@@ -204,3 +204,35 @@ test('the buffer never exceeds the configured history', async () => {
   assert.equal(detector.buffer.size('checkout-api'), 15)
   assert.equal(detector.windowsFor('checkout-api').length, 15)
 })
+
+test('new services beyond maxServices are refused and counted, known ones keep working', () => {
+  const detector = new RollingDetector({ params: params(), historyWindows: 60, maxServices: 2, logger: silentLogger })
+  const sample = (service) => ({ service, p99_latency: 100, retry_rate: 0.5, error_rate: 0.2 })
+
+  detector.ingest([sample('a'), sample('b')])
+  const results = detector.ingest([sample('a'), sample('b'), sample('req-8f3a'), sample('req-91c2')])
+
+  assert.deepEqual(results.map((r) => r.service).sort(), ['a', 'b'])
+  assert.deepEqual(detector.services().sort(), ['a', 'b'])
+  const quality = detector.dataQuality()
+  assert.equal(quality.servicesTracked, 2)
+  assert.equal(quality.servicesRejected, 2)
+  assert.equal(quality.lastServiceRejection.service, 'req-91c2')
+})
+
+test('direction is configurable globally and validated', () => {
+  const p = params({ metrics: ['throughput', 'error_rate'], minSignals: 2, direction: { throughput: 'down' } })
+  assert.deepEqual(p.direction, { throughput: 'down' })
+  assert.throws(
+    () => params({ metrics: ['throughput', 'error_rate'], direction: { throughput: 'sideways' } }),
+    /direction\["throughput"\]/
+  )
+  assert.throws(() => params({ direction: { not_a_metric: 'down' } }), /not in its metric list/)
+})
+
+test('statistic and per-metric thresholds set globally reach the engine', () => {
+  const p = params({ statistic: 'median_mad', zThresholdPerMetric: { retry_rate: 3 } })
+  assert.equal(p.statistic, 'median_mad')
+  assert.deepEqual(p.zThresholdPerMetric, { retry_rate: 3 })
+  assert.throws(() => params({ statistic: 'mode' }), /statistic/)
+})

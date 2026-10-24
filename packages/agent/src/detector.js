@@ -12,7 +12,7 @@ const DEFAULT_METRICS = ['p99_latency', 'retry_rate', 'error_rate']
  * `historyWindows` for the longest incident you expect to alert on.
  */
 export class RollingDetector {
-  constructor({ params, resolveParams, historyWindows = 40, logger }) {
+  constructor({ params, resolveParams, historyWindows = 40, maxServices = Number.POSITIVE_INFINITY, logger }) {
     this.params = params
     this.metrics = params.metrics?.length ? params.metrics : DEFAULT_METRICS
     // Per-service overrides; falls back to one shared profile when unconfigured.
@@ -22,6 +22,15 @@ export class RollingDetector {
     this.buffer = new WindowBuffer(historyWindows)
     this.detections = new Map()
     this.minWindows = params.baselineWindows + params.minSustain
+
+    // Every distinct service name costs a buffer, a cached profile and incident
+    // state. The service name comes from telemetry, so a mislabelled exporter
+    // could otherwise grow the agent without bound. Past the cap, new services
+    // are refused and counted rather than silently evicting known ones.
+    this.maxServices = maxServices
+    this.tracked = new Set()
+    this.servicesRejected = 0
+    this.lastServiceRejection = null
 
     // Data-quality accounting. "The agent is running" and "the agent is seeing
     // valid telemetry" are different claims, and only these counters can tell
@@ -51,6 +60,10 @@ export class RollingDetector {
       .map((f) => f.staleSeconds)
       .filter((s) => Number.isFinite(s))
     return {
+      servicesTracked: this.tracked.size,
+      maxServices: Number.isFinite(this.maxServices) ? this.maxServices : null,
+      servicesRejected: this.servicesRejected,
+      lastServiceRejection: this.lastServiceRejection,
       completeSamples: this.completeSamples,
       incompleteSamples: this.incompleteSamples,
       lastIncomplete: this.lastIncomplete,
@@ -107,6 +120,28 @@ export class RollingDetector {
     return missing.length > 0 ? { ok: false, missing, sample: null } : { ok: true, missing, sample: out }
   }
 
+  /** True if this service is, or may become, one the detector tracks. */
+  admit(service, nowMs = Date.now()) {
+    if (this.tracked.has(service)) return true
+    if (this.tracked.size >= this.maxServices) {
+      this.servicesRejected += 1
+      this.lastServiceRejection = { service, at: new Date(nowMs).toISOString() }
+      // Logged on the first refusal and then sparsely: a label explosion would
+      // otherwise turn into a log explosion.
+      if (this.servicesRejected === 1 || this.servicesRejected % 1000 === 0) {
+        this.logger?.warn('service.capacity_exceeded', {
+          service,
+          maxServices: this.maxServices,
+          rejected: this.servicesRejected,
+          message: 'new service refused: detector.maxServices reached; check the service label for high cardinality',
+        })
+      }
+      return false
+    }
+    this.tracked.add(service)
+    return true
+  }
+
   ingest(samples, { nowMs = Date.now() } = {}) {
     const results = []
     const seen = new Set()
@@ -115,6 +150,7 @@ export class RollingDetector {
     for (const raw of samples ?? []) {
       if (raw?.service === undefined || raw.service === null) continue
       const service = String(raw.service)
+      if (!this.admit(service, nowMs)) continue
       const { metrics } = this.paramsFor(service)
       const { ok, sample, missing } = this.normalizeSample(raw, metrics)
 
@@ -231,6 +267,7 @@ export class RollingDetector {
     let restored = 0
     for (const entry of entries) {
       if (!entry?.service || !Array.isArray(entry.samples)) continue
+      if (!this.admit(entry.service)) continue
 
       let newestMs = null
       for (const sample of entry.samples) {

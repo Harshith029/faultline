@@ -1,3 +1,5 @@
+import { configuredMetrics } from './metrics.js'
+
 /**
  * Generic pull source: any endpoint that returns the current telemetry sample
  * for each service. Accepts either a bare array or `{ samples: [...] }`.
@@ -11,7 +13,9 @@ export function createHttpSource(options = {}, ctx = {}) {
   if (!options.url) throw new Error('http source requires "url"')
   const timeoutMs = options.timeoutMs ?? 10000
   const headers = options.headers ?? {}
-  const metrics = options.metrics ?? ctx.config?.detector?.metrics ?? [
+  // Includes metrics introduced by per-service rules; reading only the global
+  // list would drop those fields and leave such services incomplete forever.
+  const metrics = options.metrics ?? configuredMetrics(ctx.config) ?? [
     'p99_latency',
     'retry_rate',
     'error_rate',

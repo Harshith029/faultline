@@ -17,6 +17,13 @@ plain-language summary. This is optional: leave `BedrockModelId` empty and it
 always serves the deterministic `hypothesis_fallback` stored alongside the
 window.
 
+The explanation for a given service, window and model is cached inside a warm
+Lambda container, because the stored timeline does not change between requests:
+successes for `HYPOTHESIS_CACHE_SECONDS` (default 900), failures for 60 seconds
+so a broken model is not called in a loop. The cache is per container, so a cold
+start or a second concurrent container calls the model again. A model call that
+exceeds its 2.5 s budget is aborted, not left running in the background.
+
 ## Local verification
 
 ```bash
@@ -49,6 +56,10 @@ npm run lint:iac
 ```
 
 Run from the repository root. It reports which Python interpreter it used.
+Error and warning findings fail the check. Informational findings (cfn-lint's
+I-series rules) are printed as `note:` lines but do not fail it, matching
+cfn-lint's own default — new advisory rules ship regularly and should not break
+the build on their own.
 
 cfn-lint is a Python tool and its console script is often not on `PATH` — pip
 installs it against one interpreter while the shell resolves `python` to another
@@ -90,8 +101,8 @@ account without someone deciding who may call the API.
 
 **The combination to avoid is `ApiAuthMode=none` with `BedrockModelId` set.** In
 that configuration any anonymous caller can drive billed model invocations. The
-API is throttled (20 burst / 10 rps), which bounds the rate but does not prevent
-it. The stack outputs `ApiAuthModeOut` and `BedrockEnabled` so this pairing is
+API is throttled (20 burst / 10 rps), and repeat requests for the same timeline
+hit the container cache, which together bound the rate but do not prevent it. The stack outputs `ApiAuthModeOut` and `BedrockEnabled` so this pairing is
 visible after deploy rather than something you have to infer.
 
 The dashboard sends unauthenticated `fetch` calls today

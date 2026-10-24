@@ -506,3 +506,83 @@ test('restoring fresh state does not make a healthy agent look degraded', async 
 
   await agent.stop()
 })
+
+test('refusing services at the cap degrades health and is exported', async () => {
+  const agent = await agentWith(async () => [goodSample({ service: 'a' }), goodSample({ service: 'b' })], {
+    detector: { maxServices: 1 },
+  })
+  await agent.store.load()
+  await agent.tick()
+
+  const health = agent.health()
+  assert.equal(health.status, 'degraded')
+  assert.ok(health.reasons.includes('service_capacity_exceeded'))
+  const { renderPrometheusMetrics } = await import('../src/server.js')
+  assert.match(renderPrometheusMetrics(agent), /^faultline_services_rejected_total 1$/m)
+  await agent.stop()
+})
+
+test('a CloudWatch sample is stamped with when CloudWatch observed it, not when it was fetched', async () => {
+  const old = '2026-03-01T10:00:00.000Z'
+  const older = '2026-03-01T09:59:00.000Z'
+  const source = createCloudWatchSource(
+    {
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: stubCloudWatch([
+        { Id: 'm0_0', Values: [250], Timestamps: [old] },
+        { Id: 'm0_1', Values: [0.01], Timestamps: [older] },
+        { Id: 'm0_2', Values: [0.02], Timestamps: [old] },
+      ]),
+    },
+    { logger: silentLogger }
+  )
+
+  const [sample] = await source.collect()
+  assert.equal(sample.timestamp, older, 'a sample is only as fresh as its stalest metric')
+})
+
+test('the prometheus source refuses to start without a query for a configured metric', () => {
+  const config = { detector: { metrics: ['p99_latency', 'queue_depth'] }, services: [] }
+  assert.throws(
+    () => createPrometheusSource({ url: 'http://prom.invalid' }, { logger: silentLogger, config }),
+    /no query for configured metrics \[queue_depth\]/
+  )
+})
+
+test('the prometheus source only runs queries for metrics the detector uses', async () => {
+  const seen = []
+  const server = await listen((req, res) => {
+    seen.push(new URL(req.url, 'http://x').searchParams.get('query'))
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ status: 'success', data: { resultType: 'vector', result: [] } }))
+  })
+  try {
+    const config = { detector: { metrics: ['queue_depth', 'consumer_lag'] }, services: [] }
+    const source = createPrometheusSource(
+      { url: server.url, queries: { queue_depth: 'sum(q) by (service)', consumer_lag: 'max(lag) by (service)' } },
+      { logger: silentLogger, config }
+    )
+    await source.collect()
+    assert.deepEqual(seen, ['sum(q) by (service)', 'max(lag) by (service)'])
+  } finally {
+    server.close()
+  }
+})
+
+test('the http source extracts metrics introduced by per-service rules', async () => {
+  const server = await listen((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify([{ service: 'queue-orders', queue_depth: 40, consumer_lag: 3 }]))
+  })
+  try {
+    const config = {
+      detector: { metrics: ['p99_latency', 'retry_rate', 'error_rate'] },
+      services: [{ match: 'queue-*', metrics: ['queue_depth', 'consumer_lag'] }],
+    }
+    const [sample] = await createHttpSource({ url: server.url }, { logger: silentLogger, config }).collect()
+    assert.equal(sample.queue_depth, 40)
+    assert.equal(sample.consumer_lag, 3)
+  } finally {
+    server.close()
+  }
+})

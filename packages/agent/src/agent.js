@@ -50,6 +50,7 @@ export class FaultlineAgent {
       params: detectorParams(config),
       resolveParams: createParamsResolver(detectorParams(config), this.serviceRules),
       historyWindows: config.detector.historyWindows,
+      maxServices: config.detector.maxServices,
       logger: this.logger,
     })
     this.alerts = new AlertManager(config.alerting)
@@ -119,6 +120,11 @@ export class FaultlineAgent {
       .map((entry) => entry.service)
     if (staleServices.length > 0) reasons.push('service_telemetry_stale')
 
+    // Services refused at the cap are services nobody is watching. Recent
+    // refusals degrade health; an old, one-off burst does not keep it red.
+    const rejection = this.detector.lastServiceRejection
+    if (rejection && nowMs - Date.parse(rejection.at) <= graceMs) reasons.push('service_capacity_exceeded')
+
     return {
       status: reasons.length === 0 ? 'ok' : 'degraded',
       reasons,
@@ -178,14 +184,19 @@ export class FaultlineAgent {
   }
 
   /**
-   * Sends an alert unless the service is silenced.
+   * Sends an alert unless the service is silenced or the incident is held.
    *
    * `notifiedAt` is what makes a maintenance window safe: an incident that
-   * opens while silenced is recorded but not sent, and if it is still firing
-   * once the window ends it is announced then rather than being lost. A resolve
-   * is only sent if the open was.
+   * opens while silenced (or inside the post-resolution cooldown) is recorded
+   * but not sent, and if it is still firing once the window ends it is
+   * announced then rather than being lost.
+   *
+   * `notifiedAt` means *every* sink accepted the open. `deliveredTo` lists the
+   * sinks that did, so a webhook that is down is retried on the next window
+   * without re-paging the channels that already have it. A resolve goes only to
+   * the sinks that received the open.
    */
-  async maybeNotify(type, incident) {
+  async maybeNotify(type, incident, nowMs = Date.now()) {
     const silence = this.silences.matching(incident.service)
     if (silence) {
       incident.silencedBy = silence.id
@@ -198,12 +209,40 @@ export class FaultlineAgent {
       return false
     }
 
-    await this.notifiers.notify({ type, agent: this.name, incident })
-    // `notifiedAt` records successful delivery, so it can only be set after the
-    // await. Two notifications for one incident cannot interleave: ticks are
-    // serialised by the `ticking` guard and a tick handles each service once.
-    // eslint-disable-next-line require-atomic-updates
-    if (type === 'incident.opened') incident.notifiedAt = new Date().toISOString()
+    if (type === 'incident.opened' && incident.heldUntil && nowMs < Date.parse(incident.heldUntil)) {
+      this.logger.info('incident.held', {
+        incident: incident.id,
+        service: incident.service,
+        reason: 'cooldown',
+        until: incident.heldUntil,
+      })
+      return false
+    }
+
+    const event = { type, agent: this.name, incident }
+
+    if (type === 'incident.resolved') {
+      const only = incident.deliveredTo?.length ? incident.deliveredTo : null
+      await this.notifiers.notify(event, only ? { only } : {})
+      return true
+    }
+
+    const report = await this.notifiers.notify(event, { skip: incident.deliveredTo ?? [] })
+    // These can only be set after the await. Two notifications for one incident
+    // cannot interleave: ticks are serialised by the `ticking` guard and a tick
+    // handles each service once.
+    incident.deliveredTo = [...(incident.deliveredTo ?? []), ...(report?.delivered ?? [])]
+    const failed = report?.failed ?? []
+    if (failed.length > 0) {
+      this.logger.warn('incident.delivery_incomplete', {
+        incident: incident.id,
+        service: incident.service,
+        failed,
+        message: 'not every notifier accepted the alert; the failed ones are retried next window while it fires',
+      })
+      return false
+    }
+    incident.notifiedAt = new Date(nowMs).toISOString()
     return true
   }
 
@@ -358,12 +397,14 @@ export class FaultlineAgent {
             service: outcome.incident.service,
             R: outcome.incident.triggerR,
             signals: outcome.incident.triggerSignalCount,
+            heldUntil: outcome.incident.heldUntil ?? null,
           })
           await this.maybeNotify('incident.opened', outcome.incident)
           this.store.upsertIncident(outcome.incident)
         } else if (outcome.type === 'updated') {
-          // A silence that expires mid-incident should still page: announce an
-          // incident that was never sent once it is no longer suppressed.
+          // An incident that was never fully sent — silenced, held by the
+          // cooldown, or a notifier that failed — is announced (or retried) as
+          // soon as nothing stops it, for as long as it is still firing.
           if (!outcome.incident.notifiedAt) {
             await this.maybeNotify('incident.opened', outcome.incident)
           }
@@ -375,16 +416,10 @@ export class FaultlineAgent {
             windowsFiring: outcome.incident.windowsFiring,
             peakR: outcome.incident.peakR,
           })
-          if (outcome.incident.notifiedAt) {
+          if (outcome.incident.notifiedAt || outcome.incident.deliveredTo?.length) {
             await this.maybeNotify('incident.resolved', outcome.incident)
           }
           this.store.upsertIncident(outcome.incident)
-        } else if (outcome.type === 'suppressed') {
-          this.logger.info('incident.suppressed', {
-            service: result.service,
-            reason: outcome.reason,
-            retryAfterMs: outcome.retryAfterMs,
-          })
         }
       }
 
@@ -464,20 +499,6 @@ export class FaultlineAgent {
   }
 
   /**
-   * Ordered shutdown.
-   *
-   * The ordering matters and the previous version got it wrong in a way that
-   * loses work: it closed the store while a collection could still be in
-   * flight, so a tick that completed afterwards advanced detection state,
-   * scheduled more work, and wrote into a closed store. The sequence here is:
-   * stop admitting new ticks, let the current one finish (bounded), stop the
-   * server and source, snapshot exactly once, then close.
-   *
-   * `graceMs` bounds the wait. A source wedged on a socket must not hold a
-   * SIGTERM open until the orchestrator sends SIGKILL, so after the grace
-   * period the agent gives up on the in-flight tick and saves what it has.
-   */
-  /**
    * Services ordered by current cascade risk, most at-risk first.
    *
    * This is the honest primary use of the tool. Measured against real
@@ -518,6 +539,20 @@ export class FaultlineAgent {
     }
   }
 
+  /**
+   * Ordered shutdown.
+   *
+   * The ordering matters and the previous version got it wrong in a way that
+   * loses work: it closed the store while a collection could still be in
+   * flight, so a tick that completed afterwards advanced detection state,
+   * scheduled more work, and wrote into a closed store. The sequence here is:
+   * stop admitting new ticks, let the current one finish (bounded), stop the
+   * server and source, snapshot exactly once, then close.
+   *
+   * `graceMs` bounds the wait. A source wedged on a socket must not hold a
+   * SIGTERM open until the orchestrator sends SIGKILL, so after the grace
+   * period the agent gives up on the in-flight tick and saves what it has.
+   */
   async stop({ graceMs = 5000 } = {}) {
     if (this.stopping) return this.stopping
     this.signalStopRequested()

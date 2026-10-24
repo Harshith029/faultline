@@ -1,28 +1,54 @@
 import { createServer } from 'node:http'
 import { createServer as createTlsServer } from 'node:https'
 import { readFileSync } from 'node:fs'
-import { createAuthenticator } from './auth.js'
+import { createAuthenticator, isLoopbackHost } from './auth.js'
 
-let corsOrigin = '*'
+const ALLOW_HEADERS = 'Content-Type, Authorization, X-API-Key'
 
 const json = (res, status, body) => {
   const payload = JSON.stringify(body, null, 2)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),
-    'Access-Control-Allow-Origin': corsOrigin,
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
     'Cache-Control': 'no-store',
   })
   res.end(payload)
 }
 
 const text = (res, status, body) => {
-  res.writeHead(status, {
-    'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
-    'Access-Control-Allow-Origin': corsOrigin,
-  })
+  res.writeHead(status, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' })
   res.end(body)
+}
+
+/**
+ * Which browser origins may read the API. `null` (the default) means none: the
+ * agent ships no browser client, so there is nothing to allow.
+ */
+export function createCorsPolicy(corsOrigin = null) {
+  const list = corsOrigin == null ? [] : Array.isArray(corsOrigin) ? corsOrigin : [corsOrigin]
+  const wildcard = list.includes('*')
+  return {
+    /** Value for Access-Control-Allow-Origin, or null to send none. */
+    allowOriginFor(origin) {
+      if (wildcard) return '*'
+      return origin && list.includes(origin) ? origin : null
+    },
+    /**
+     * A browser write must come from an origin named explicitly. A wildcard
+     * never authorises one: on a token-less loopback agent the browser is the
+     * only thing standing between a malicious page and a fleet-wide silence.
+     */
+    allowsWriteFrom(origin) {
+      return list.includes(origin)
+    },
+  }
+}
+
+// `Host: [::1]:8787` → `::1`, `Host: localhost:8787` → `localhost`.
+const hostnameOf = (hostHeader = '') => {
+  const value = String(hostHeader).trim()
+  if (value.startsWith('[')) return value.slice(1, value.indexOf(']'))
+  return value.split(':')[0]
 }
 
 // Routes that change state; everything else is a read.
@@ -75,6 +101,9 @@ export function renderPrometheusMetrics(agent) {
     '# HELP faultline_incomplete_samples_total Samples dropped for missing metrics.',
     '# TYPE faultline_incomplete_samples_total counter',
     `faultline_incomplete_samples_total ${snapshot.dataQuality.incompleteSamples}`,
+    '# HELP faultline_services_rejected_total Samples refused because detector.maxServices was reached.',
+    '# TYPE faultline_services_rejected_total counter',
+    `faultline_services_rejected_total ${snapshot.dataQuality.servicesRejected}`,
     '# HELP faultline_telemetry_healthy Whether the agent is observing valid telemetry (distinct from faultline_up).',
     '# TYPE faultline_telemetry_healthy gauge',
     `faultline_telemetry_healthy ${snapshot.health.status === 'ok' ? 1 : 0}`,
@@ -124,24 +153,49 @@ export function renderPrometheusMetrics(agent) {
 
 export function createApiServer(agent, { logger, serverConfig = {}, env = process.env } = {}) {
   const auth = createAuthenticator(serverConfig, env)
-  corsOrigin = serverConfig.corsOrigin ?? '*'
+  const cors = createCorsPolicy(serverConfig.corsOrigin ?? null)
 
   const handler = async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`)
+    const url = new URL(req.url, 'http://agent.invalid')
     const route = `${req.method} ${url.pathname}`
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : null
+    const write = isWrite(req.method, url.pathname)
 
     try {
+      const allowOrigin = cors.allowOriginFor(origin)
+      if (allowOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', allowOrigin)
+        res.setHeader('Access-Control-Allow-Headers', ALLOW_HEADERS)
+        if (allowOrigin !== '*') res.setHeader('Vary', 'Origin')
+      }
+
       if (req.method === 'OPTIONS') {
         res.writeHead(204, {
-          'Access-Control-Allow-Origin': corsOrigin,
           'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
+          'Access-Control-Allow-Headers': ALLOW_HEADERS,
         })
         return res.end()
       }
 
+      // DNS rebinding: a hostile page can point its own domain at 127.0.0.1
+      // and become same-origin with a token-less agent. The Host header still
+      // carries the hostile name, so an unauthenticated agent answers only to
+      // loopback names. With a token, the token is the control.
+      if (!auth.enabled && url.pathname !== '/health' && !isLoopbackHost(hostnameOf(req.headers.host))) {
+        logger.warn('server.host_refused', { route, host: req.headers.host ?? null })
+        return json(res, 421, { error: 'unauthenticated agent only answers to a loopback Host header' })
+      }
+
+      // Cross-site request forgery: browsers attach an Origin header to every
+      // cross-origin POST/DELETE, including "simple" ones they send without a
+      // preflight. Non-browser clients (curl, scripts, Prometheus) send none.
+      if (write && origin && !cors.allowsWriteFrom(origin)) {
+        logger.warn('server.cross_origin_write_refused', { route, origin })
+        return json(res, 403, { error: `cross-origin write from ${origin} refused; list it in server.corsOrigin to allow it` })
+      }
+
       const refusal = auth.authorize(req, {
-        write: isWrite(req.method, url.pathname),
+        write,
         anonymous: url.pathname === '/health',
       })
       if (refusal) {
@@ -193,7 +247,7 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
         const limit = Number(url.searchParams.get('limit') ?? 50)
         return json(res, 200, {
           incidents: agent.store.getIncidents({
-            limit: Number.isFinite(limit) ? Math.min(limit, 500) : 50,
+            limit: Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 500) : 50,
             status: url.searchParams.get('status') ?? undefined,
             service: url.searchParams.get('service') ?? undefined,
           }),
@@ -227,6 +281,11 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
       }
 
       if (route === 'POST /api/silences') {
+        // Requiring JSON keeps this out of the browser's "simple request"
+        // class, so even an allowed cross-origin caller must pass a preflight.
+        if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+          return json(res, 415, { error: 'Content-Type must be application/json' })
+        }
         let body
         try {
           body = await readJson(req)

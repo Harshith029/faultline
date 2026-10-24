@@ -58,8 +58,9 @@ computation.
 - [ ] Enable TLS (`server.tls`) or terminate it at your ingress. Binding beyond
       `127.0.0.1` without TLS logs a `server.plaintext` warning.
 - [ ] Keep the API off the public internet regardless of authentication.
-- [ ] Set `server.corsOrigin` to your dashboard origin instead of `*` if a
-      browser will call the API.
+- [ ] Leave `server.corsOrigin` at its default (`null`, no browser access)
+      unless a browser must call the API; then list that exact origin rather
+      than `*`. A wildcard never authorises a browser write.
 - [ ] Store webhook URLs in `urlEnv`, never inline. Literal tokens in config are
       rejected at startup, and a webhook URL is a credential.
 - [ ] Put the state file on a volume only the agent user can read: it contains
@@ -81,6 +82,14 @@ computation.
 - **`/health` is deliberately anonymous.** Probes must reach it before any
   credential exists; it exposes no telemetry.
 - **Request bodies are capped** at 64 KB.
+- **Loopback is not treated as a trust boundary against the browser.** A page
+  in the operator's browser can reach `127.0.0.1`, so the token-less agent
+  refuses writes carrying a foreign `Origin` header (cross-site request
+  forgery), requires `application/json` to create a silence (no
+  preflight-free "simple" request can), and answers only to a loopback `Host`
+  header (DNS rebinding). No CORS headers are sent unless configured.
+- **Distinct services are capped** (`detector.maxServices`, default 1000), so
+  a high-cardinality service label cannot grow memory without bound.
 
 ## Known limitations
 

@@ -1,7 +1,7 @@
 {
   "name": "faultline",
   "version": "1.0.0",
-  "description": "Reliability intelligence for distributed systems: deterministic cascade-failure detection with an AI explanation layer",
+  "description": "Per-service multivariate drift detection: a deterministic monitoring agent, with an optional AI explanation layer in the AWS Lambda variant",
   "private": true,
   "type": "module",
   "license": "MIT",
