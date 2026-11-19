@@ -15,11 +15,12 @@ source.collect()
   → runDetection() on the buffer (@faultline/core, the same engine the UI uses)
   → evaluate the newest window
   → AlertManager: open / update / resolve / suppress
-  → notifiers (up to 4 at a time) + durable store
+  → notifiers (up to 4 at once, awaited for at most half an interval) + durable store
 ```
 
 A tick that overruns its interval will not overlap with the next one; the
-skipped cycle is logged as `agent.tick_skipped`.
+skipped cycle is logged as `agent.tick_skipped`. A slow notifier cannot cause
+that on its own — see [Alert routing](#alert-routing).
 
 ## Warm-up
 
@@ -268,9 +269,36 @@ common source of false positives when omitted.
   Supply the URL via `urlEnv` (recommended) or `FAULTLINE_WEBHOOK_URL`.
 - `file` — appends JSONL. Useful for shipping into a log pipeline.
 
-A tick's notifications are sent up to four at a time, so a burst of incidents
-against a slow webhook costs about a quarter of the timeouts it would one after
-another.
+Notifications are sent up to four at a time, so a burst of incidents against a
+slow webhook costs about a quarter of the timeouts it would one after another.
+The limit is shared by every tick, so a receiver that is already slow is never
+sent more at once.
+
+A slow receiver cannot hold up detection either. A tick waits for its
+notifications for at most half the collection interval; any still sending then
+finish in the background, logged as `notify.deferred` with the number of
+services still pending. Waiting any longer could push the tick past the next
+collection, and a skipped collection is a hole in every service's series that
+restarts their sustained runs (see [Time continuity](#time-continuity)).
+
+Sending in the background keeps the guarantees of a tick that waited:
+
+- A service's notifications go out one at a time, in the order they were
+  decided. An incident never has two in flight, and a resolve decided while its
+  open is still sending waits for that open. A notification that had to wait
+  carries the incident as it stands when sent: an open that goes out after its
+  incident recovered already shows `status: "resolved"`, and `event` says which
+  transition it announces.
+- A window does not retry an open that is still being sent. If that attempt
+  fails, the next window retries it as usual.
+- Each incident is saved again once its notification settles, so the stored
+  record carries what was actually sent.
+- Shutdown (`SIGTERM`) waits for them within the same five-second grace it gives
+  a collection in flight. Any still sending after that are logged as
+  `agent.shutdown_delivery_abandoned`. An open among them is sent again after
+  the restart if its incident is still firing; a resolve is not.
+- Retiring a service waits for any still being sent for that service (see
+  [Retiring services](#retiring-services)).
 
 Notifier failures are logged as `notify.failed` and never interrupt detection.
 They are also never mistaken for delivery:
@@ -328,9 +356,11 @@ it, alert on it:
 ```
 
 `GET /api/state` lists the last 20 retirements, with reason and time, under
-`recentRetirements`. A request to `DELETE /api/services/:name` that arrives
-while a collection is stuck answers `503` with `Retry-After` rather than
-waiting on it.
+`recentRetirements`. A request to `DELETE /api/services/:name` first waits, for
+up to ten seconds, for a collection in flight and for any alert to that service
+still being sent, since either could still write that service's incident. If
+one is stuck, the request answers `503` with `Retry-After` rather than waiting
+on it.
 
 ## HTTP API
 
@@ -544,6 +574,7 @@ readinessProbe:
 | Alerts on a quiet service | Baseline variance near zero | Set `sigmaFloorAbs` |
 | Long incident self-resolves while still broken | Incident absorbed into its rolling baseline | Raise `historyWindows` |
 | `incident.delivery_incomplete` | A notifier rejected or timed out on the alert | Check the `notify.failed` log for that notifier; it is retried each window while the incident fires |
+| `notify.deferred` | Notifications were still sending when the tick's delivery budget (half the interval) ran out | Detection is unaffected and they finish in the background; check the receiver's latency and any `notify.failed` for it |
 | `/health` reason `service_capacity_exceeded` | More distinct services than `detector.maxServices` | Usually a high-cardinality `service` label (a pod or request id); fix the label, or raise the cap deliberately |
 | API returns `421` | Token-less agent reached with a non-loopback `Host` header | Use `localhost`/`127.0.0.1`, or set a token |
 | API write returns `403 cross-origin write refused` | A browser page on another origin tried to write | Expected for untrusted pages; list a trusted origin in `server.corsOrigin` |

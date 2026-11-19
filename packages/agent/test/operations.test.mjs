@@ -10,7 +10,7 @@ import { silentLogger } from '../src/logger.js'
 
 // Operating the agent under an orchestrator: liveness that cannot restart-loop
 // on a telemetry outage, retiring services that are gone, and notification
-// delivery that does not serialise a burst of incidents.
+// delivery that neither serialises a burst of incidents nor holds up detection.
 
 const TOKEN = 'ops-full-token'
 const READ = 'ops-read-token'
@@ -345,10 +345,14 @@ test('one delivery that throws does not abandon the others', async () => {
     sent.push(incident.id)
   }
 
-  const jobs = Array.from({ length: 5 }, (_, i) => ({ type: 'incident.opened', incident: { id: `inc_${i}` } }))
+  // All for one service, so the ones after the failure are queued behind it.
+  const jobs = Array.from({ length: 5 }, (_, i) => ({
+    type: 'incident.opened',
+    incident: { id: `inc_${i}`, service: 'api' },
+  }))
   await agent.deliver(jobs)
 
-  assert.deepEqual(sent.sort(), ['inc_0', 'inc_1', 'inc_3', 'inc_4'])
+  assert.deepEqual(sent, ['inc_0', 'inc_1', 'inc_3', 'inc_4'])
 })
 
 test('a burst of incidents reaches a slow webhook concurrently, and every one is delivered', async () => {
@@ -389,6 +393,168 @@ test('a burst of incidents reaches a slow webhook concurrently, and every one is
   } finally {
     await agent.stop()
     await new Promise((resolve) => hook.close(resolve))
+  }
+})
+
+// A webhook that records each alert as it arrives and answers none of them
+// until release(), so a test decides exactly how long a delivery stays in flight.
+const gatedWebhook = async () => {
+  const held = []
+  let released = false
+  const hook = { received: [], peakHeld: 0 }
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (chunk) => (body += chunk))
+    req.on('end', () => {
+      const { event, incident } = JSON.parse(body)
+      hook.received.push({ service: incident.service, event })
+      const respond = () => {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end('{}')
+      }
+      if (released) return respond()
+      held.push(respond)
+      hook.peakHeld = Math.max(hook.peakHeld, held.length)
+    })
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  hook.url = `http://127.0.0.1:${server.address().port}/hook`
+  hook.release = () => {
+    released = true
+    for (const respond of held.splice(0)) respond()
+  }
+  hook.close = () => new Promise((resolve) => server.close(resolve))
+  return hook
+}
+
+/** One service whose alert is still unanswered when the tick that sent it returns. */
+const agentWithHeldAlert = async (hook) => {
+  let hot = false
+  const agent = await agentWith(async () => [hot ? elevated('api') : sample('api')], {
+    alerting: { notifiers: [{ type: 'webhook', url: hook.url }] },
+  })
+  agent.deliveryBudgetMs = 20
+  await agent.start()
+  for (let i = 0; i < 3; i++) await agent.tick()
+  hot = true
+  await agent.tick()
+  await agent.tick()
+  assert.ok(agent.alerts.isFiring('api'))
+  assert.equal(agent.pendingDeliveries.size, 1, 'the alert outlived the tick that queued it')
+  return agent
+}
+
+test('a slow webhook cannot hold up the next collection, and every alert still arrives once, in order', async () => {
+  const hook = await gatedWebhook()
+  // `first` fills every send slot; `second` starts failing one window later.
+  const first = Array.from({ length: DELIVERY_CONCURRENCY }, (_, i) => `first-${i}`)
+  const second = ['second-0', 'second-1']
+  const all = [...first, ...second]
+  const hot = new Set()
+  const agent = await agentWith(async () => all.map((s) => (hot.has(s) ? elevated(s) : sample(s))), {
+    alerting: { notifiers: [{ type: 'webhook', url: hook.url }] },
+  })
+  agent.deliveryBudgetMs = 50
+  try {
+    await agent.start()
+    for (let i = 0; i < 3; i++) await agent.tick()
+    for (const s of first) hot.add(s)
+    await agent.tick()
+    for (const s of second) hot.add(s)
+
+    // This window opens `first`. The webhook answers none of it, yet the tick
+    // returns once its budget is spent rather than waiting on the receiver.
+    const startedAt = Date.now()
+    await agent.tick()
+    const tickMs = Date.now() - startedAt
+    assert.equal(agent.store.stats().firing, first.length)
+    // Waiting on the webhook would have taken its 5 s timeout.
+    assert.ok(tickMs < agent.deliveryBudgetMs + 2000, `the tick waited on the webhook (${tickMs} ms)`)
+
+    // `second` opens while `first` holds every slot, so its alerts wait their
+    // turn; `first`, still firing and still unconfirmed, is not sent again.
+    await agent.tick()
+    assert.equal(agent.store.stats().firing, all.length)
+
+    // Everything recovers while every open is still unanswered. Each resolve is
+    // queued behind its own open rather than dropped for lack of a delivery.
+    hot.clear()
+    for (let i = 0; i < 10 && agent.store.stats().resolved < all.length; i++) await agent.tick()
+    assert.equal(agent.store.stats().resolved, all.length)
+    assert.deepEqual(
+      hook.received.map((r) => r.service).sort(),
+      first,
+      'only the first alerts have been sent: the rest are queued and nothing was sent twice'
+    )
+
+    // The receiver recovers, and stop() waits for the backlog to drain.
+    hook.release()
+    await agent.stop()
+
+    for (const service of all) {
+      assert.deepEqual(
+        hook.received.filter((r) => r.service === service).map((r) => r.event),
+        ['incident.opened', 'incident.resolved'],
+        `${service}: exactly one open, then exactly one resolve`
+      )
+    }
+    assert.equal(hook.peakHeld, DELIVERY_CONCURRENCY, 'the send limit holds across ticks')
+    for (const incident of agent.store.getIncidents()) {
+      assert.ok(incident.notifiedAt, `${incident.service} is saved as delivered`)
+      assert.deepEqual(incident.deliveredTo, ['0:webhook'])
+    }
+  } finally {
+    hook.release()
+    await agent.stop()
+    await hook.close()
+  }
+})
+
+test('retiring a service waits for its alert still being sent, so the retirement is not overwritten', async () => {
+  const hook = await gatedWebhook()
+  const agent = await agentWithHeldAlert(hook)
+  try {
+    // Retired now, the delivery would settle afterwards and save the incident
+    // back as firing over its retired record.
+    agent.retireWaitMs = 50
+    await assert.rejects(agent.retireService('api'), { code: 'AGENT_BUSY' })
+    assert.ok(agent.alerts.isFiring('api'), 'nothing was retired')
+
+    hook.release()
+    const { incidentClosed } = await agent.retireService('api', { waitMs: 2000 })
+    await agent.stop()
+    const record = agent.store.getIncident(incidentClosed)
+    assert.equal(record.status, 'retired')
+    assert.ok(record.notifiedAt, 'the retired record carries what the delivery recorded')
+  } finally {
+    hook.release()
+    await agent.stop()
+    await hook.close()
+  }
+})
+
+test('stop() waits for an alert still being sent in the background, but only for its grace period', async () => {
+  const hook = await gatedWebhook()
+  const agent = await agentWithHeldAlert(hook)
+  try {
+    const graceMs = 300
+    const startedAt = Date.now()
+    const stopping = agent.stop({ graceMs })
+    const early = await Promise.race([
+      stopping.then(() => 'stopped'),
+      new Promise((resolve) => setTimeout(() => resolve('waiting'), 100)),
+    ])
+    assert.equal(early, 'waiting', 'stop() did not wait for the alert')
+
+    await stopping
+    const stopMs = Date.now() - startedAt
+    // Waiting on the alert would have taken the webhook's 5 s timeout.
+    assert.ok(stopMs < graceMs + 2000, `stop() overran its grace period (${stopMs} ms)`)
+  } finally {
+    hook.release()
+    await Promise.all(agent.pendingDeliveries.values())
+    await agent.stop()
+    await hook.close()
   }
 })
 

@@ -12,11 +12,20 @@ import { createAuthenticator, isLoopbackHost } from './auth.js'
 
 export const VERSION = '1.0.0'
 
-// How many notifications a tick sends at once. A webhook that times out costs
+// How many notifications are sent at once. A webhook that times out costs
 // seconds; sending one incident's alert after another made a burst of N
 // incidents cost N timeouts. Bounded rather than unbounded so a large burst
-// does not hammer a rate-limited receiver (Slack accepts about one per second).
+// does not hammer a rate-limited receiver (Slack accepts about one per second),
+// and shared by every tick, so alerts one tick left sending count against the
+// next one's.
 export const DELIVERY_CONCURRENCY = 4
+
+// The share of the collection interval a tick waits for its notifications.
+// Whatever is still sending then finishes in the background, because a slow
+// receiver must not delay the next collection: a skipped collection is a hole
+// in every service's series, and a hole restarts their sustained runs. Half
+// leaves the other half of the interval for collection itself.
+const DELIVERY_BUDGET_FRACTION = 0.5
 
 // A collection that has been in flight this many intervals (and at least the
 // minimum below) is treated as wedged, and liveness fails so the process can
@@ -46,6 +55,26 @@ const settlesWithin = (promise, ms) => {
     timer = setTimeout(() => resolve(false), ms)
   })
   return Promise.race([promise.then(() => true), timeout]).finally(() => clearTimeout(timer))
+}
+
+// At most `permits` holders at once; the rest wait in arrival order.
+const createSemaphore = (permits) => {
+  const waiting = []
+  return {
+    async acquire() {
+      if (permits > 0) {
+        permits -= 1
+        return
+      }
+      await new Promise((resolve) => waiting.push(resolve))
+    },
+    release() {
+      // Handed straight to the longest waiter, so a newcomer cannot jump the queue.
+      const next = waiting.shift()
+      if (next) next()
+      else permits += 1
+    },
+  }
 }
 
 /**
@@ -122,6 +151,13 @@ export class FaultlineAgent {
     this.retiredServices = { operator: 0, silent: 0 }
     this.recentRetirements = []
     this.retireWaitMs = RETIRE_WAIT_MS
+
+    // Notifications can outlive the tick that queued them (see tick()). By
+    // service: a promise that settles once everything queued for that service
+    // has been sent and its incident saved. See deliver().
+    this.pendingDeliveries = new Map()
+    this.sendSlots = createSemaphore(DELIVERY_CONCURRENCY)
+    this.deliveryBudgetMs = this.intervalSeconds * 1000 * DELIVERY_BUDGET_FRACTION
 
     // A successful HTTP call that returns nothing is not the same as telemetry.
     // These track "did we actually observe anything" independently of "did the
@@ -310,19 +346,25 @@ export class FaultlineAgent {
   }
 
   /**
-   * Retires a service on request, once any collection in flight has finished.
-   * Bounded: if the collection is wedged — the case /livez reports — this
-   * gives up after `waitMs` with an AgentBusyError instead of hanging with it.
+   * Retires a service on request, once nothing in flight can still write its
+   * incident: neither a collection nor an alert for that service still being
+   * sent. A delivery that settled after the retirement would save the incident
+   * back as firing, over its retired record. Bounded: if either is wedged — a
+   * stuck collection is what /livez reports — this gives up after `waitMs` with
+   * an AgentBusyError instead of hanging with it.
    */
   async retireService(service, { waitMs = this.retireWaitMs, ...options } = {}) {
     const deadline = Date.now() + waitMs
-    while (this.ticking && this.tickDone) {
+    for (;;) {
+      const inFlight = this.ticking && this.tickDone ? this.tickDone : this.pendingDeliveries.get(service)
+      if (!inFlight) return this.retireServiceNow(service, options)
       const remaining = deadline - Date.now()
-      if (remaining <= 0 || !(await settlesWithin(this.tickDone, remaining))) {
-        throw new AgentBusyError('a collection is still in progress; retry once it has finished')
+      if (remaining <= 0 || !(await settlesWithin(inFlight, remaining))) {
+        throw new AgentBusyError(
+          'a collection or an alert for this service is still in progress; retry once it has finished'
+        )
       }
     }
-    return this.retireServiceNow(service, options)
   }
 
   /**
@@ -357,6 +399,10 @@ export class FaultlineAgent {
    * the sinks that received the open.
    */
   async maybeNotify(type, incident, nowMs = Date.now()) {
+    // A resolve that waited behind its open learns only now whether the open
+    // reached anyone. Nobody who was not told it opened is told it resolved.
+    if (type === 'incident.resolved' && !incident.notifiedAt && !incident.deliveredTo?.length) return false
+
     const silence = this.silences.matching(incident.service)
     if (silence) {
       incident.silencedBy = silence.id
@@ -389,8 +435,8 @@ export class FaultlineAgent {
 
     const report = await this.notifiers.notify(event, { skip: incident.deliveredTo ?? [] })
     // These can only be set after the await. Two notifications for one incident
-    // cannot interleave: ticks are serialised by the `ticking` guard, a tick
-    // handles each service once, and a service has at most one incident.
+    // cannot interleave: deliver() sends a service's notifications strictly one
+    // after another, even when they were queued by different ticks.
     incident.deliveredTo = [...(incident.deliveredTo ?? []), ...(report?.delivered ?? [])]
     const failed = report?.failed ?? []
     if (failed.length > 0) {
@@ -407,28 +453,51 @@ export class FaultlineAgent {
   }
 
   /**
-   * Sends a tick's notifications, DELIVERY_CONCURRENCY at a time.
+   * Queues notifications. Resolves once every one of them has been sent and its
+   * incident saved; it never rejects.
    *
-   * The tick still waits for all of them: an incident's delivery state has to
-   * be settled before the next tick decides whether to retry it. What changes is
-   * the cost of a slow receiver — a burst of N incidents now costs roughly
-   * ceil(N / DELIVERY_CONCURRENCY) notifier timeouts instead of N.
+   * Across services, sends run DELIVERY_CONCURRENCY at a time, so a burst of N
+   * incidents against a slow receiver costs about ceil(N / DELIVERY_CONCURRENCY)
+   * notifier timeouts instead of N. Within a service they run one after another,
+   * in the order they were decided: an incident never has two sends in flight,
+   * and a resolve decided while its open is still sending waits for that open.
+   *
+   * A notification can outlive the tick that queued it, so `pendingDeliveries`
+   * is also what the next tick, retireService() and stop() check and wait on.
    */
-  async deliver(jobs) {
-    let next = 0
-    const worker = async () => {
-      while (next < jobs.length) {
-        const { type, incident } = jobs[next++]
-        try {
-          await this.maybeNotify(type, incident)
-        } catch (err) {
-          // Notifiers report failures rather than throw, so this is a bug; it
-          // must still not abandon the other incidents' deliveries.
-          this.logger.error('notify.delivery_error', { incident: incident.id, message: err.message })
-        }
-      }
+  deliver(jobs) {
+    return Promise.all(jobs.map(({ type, incident }) => this.queueDelivery(type, incident)))
+  }
+
+  queueDelivery(type, incident) {
+    const { service } = incident
+    const previous = this.pendingDeliveries.get(service) ?? Promise.resolve()
+    const done = previous
+      .then(() => this.sendAndSave(type, incident))
+      .catch((err) => {
+        // Notifiers report failures rather than throw, so this is a bug. It is
+        // contained here because a link that rejected would skip every
+        // notification queued behind it for this service.
+        this.logger.error('notify.delivery_error', { incident: incident.id, message: err.message })
+      })
+    this.pendingDeliveries.set(service, done)
+    done.then(() => {
+      // Only the newest delivery for a service clears its entry; an older one
+      // finishing must not hide one still queued behind it.
+      if (this.pendingDeliveries.get(service) === done) this.pendingDeliveries.delete(service)
+    })
+    return done
+  }
+
+  async sendAndSave(type, incident) {
+    await this.sendSlots.acquire()
+    try {
+      await this.maybeNotify(type, incident)
+    } finally {
+      this.sendSlots.release()
     }
-    await Promise.all(Array.from({ length: Math.min(DELIVERY_CONCURRENCY, jobs.length) }, worker))
+    // Saved once the send has settled, so the stored record carries what was sent.
+    this.store.upsertIncident(incident)
   }
 
   async start() {
@@ -599,27 +668,43 @@ export class FaultlineAgent {
         } else if (outcome.type === 'updated') {
           // An incident that was never fully sent — silenced, held by the
           // cooldown, or a notifier that failed — is announced (or retried) as
-          // soon as nothing stops it, for as long as it is still firing.
-          if (!outcome.incident.notifiedAt) {
+          // soon as nothing stops it, for as long as it is still firing. Not
+          // while an earlier attempt is still sending: that attempt settles it.
+          if (!outcome.incident.notifiedAt && !this.pendingDeliveries.has(outcome.incident.service)) {
             deliveries.push({ type: 'incident.opened', incident: outcome.incident })
           }
           touched.push(outcome.incident)
         } else if (outcome.type === 'resolved') {
+          const { incident } = outcome
           this.logger.info('incident.resolved', {
-            incident: outcome.incident.id,
-            service: outcome.incident.service,
-            windowsFiring: outcome.incident.windowsFiring,
-            peakR: outcome.incident.peakR,
+            incident: incident.id,
+            service: incident.service,
+            windowsFiring: incident.windowsFiring,
+            peakR: incident.peakR,
           })
-          if (outcome.incident.notifiedAt || outcome.incident.deliveredTo?.length) {
-            deliveries.push({ type: 'incident.resolved', incident: outcome.incident })
+          // An open still sending may yet reach someone, so its resolve is
+          // queued behind it; maybeNotify() decides once the open has settled.
+          if (incident.notifiedAt || incident.deliveredTo?.length || this.pendingDeliveries.has(incident.service)) {
+            deliveries.push({ type: 'incident.resolved', incident })
           }
-          touched.push(outcome.incident)
+          touched.push(incident)
         }
       }
 
-      await this.deliver(deliveries)
-      // Persisted after delivery so the stored record carries what was sent.
+      // The tick waits for its notifications only up to the delivery budget, so
+      // a slow or failing receiver cannot push it past the next collection.
+      // Anything still sending carries on in the background.
+      const sent = await settlesWithin(this.deliver(deliveries), this.deliveryBudgetMs)
+      if (!sent) {
+        this.logger.warn('notify.deferred', {
+          pending: this.pendingDeliveries.size,
+          budgetMs: this.deliveryBudgetMs,
+          message: 'notifications still sending after the delivery budget; they finish in the background',
+        })
+      }
+      // Persisted after delivery so the stored record carries what was sent. An
+      // incident whose notification is still sending is saved again, by
+      // sendAndSave(), once that settles.
       for (const incident of touched) this.store.upsertIncident(incident)
 
       this.retireSilentServices()
@@ -760,11 +845,13 @@ export class FaultlineAgent {
    *
    * `graceMs` bounds the wait. A source wedged on a socket must not hold a
    * SIGTERM open until the orchestrator sends SIGKILL, so after the grace
-   * period the agent gives up on the in-flight tick and saves what it has.
+   * period the agent gives up on the in-flight tick and saves what it has. The
+   * same period also covers notifications a tick left sending in the background.
    */
   async stop({ graceMs = 5000 } = {}) {
     if (this.stopping) return this.stopping
     this.signalStopRequested()
+    const graceEndsAtMs = Date.now() + graceMs
     this.stopping = (async () => {
       this.running = false
 
@@ -790,6 +877,20 @@ export class FaultlineAgent {
           this.logger.warn('agent.shutdown_tick_abandoned', {
             graceMs,
             message: 'in-flight collection did not finish within the grace period; saving state anyway',
+          })
+        }
+      }
+
+      // Notifications still sending get what is left of the grace period, so a
+      // clean shutdown neither cuts a page off mid-send nor saves an incident
+      // before its delivery settled.
+      if (this.pendingDeliveries.size > 0) {
+        const remainingMs = Math.max(0, graceEndsAtMs - Date.now())
+        if (!(await settlesWithin(Promise.all(this.pendingDeliveries.values()), remainingMs))) {
+          this.logger.warn('agent.shutdown_delivery_abandoned', {
+            graceMs,
+            pending: this.pendingDeliveries.size,
+            message: 'notifications still sending when the grace period ran out; saving state anyway',
           })
         }
       }
