@@ -99,6 +99,18 @@ measurement, and inventing one would turn lost telemetry into perfect health.
 The Prometheus and CloudWatch sources refuse to start if they cannot supply a
 configured metric, including ones introduced by a per-service rule.
 
+The CloudWatch source holds a sample to one point in time as well. Its metrics
+are published on separate schedules, so each sample is built from a single
+period, the newest in which every configured metric has a datapoint, and carries
+that period's start time. When no period in its three-period window is complete,
+it sends what the newest period has and leaves the rest missing, so a service
+that needs a missing metric gets an incomplete sample rather than one pieced
+together from different minutes. Because only whole periods are read, a sample
+trails the clock by at least one period, and by more while CloudWatch is still
+publishing: with `periodSeconds` longer than a minute, set
+`detector.noDataGraceSeconds` (default 300) above a few periods so a healthy
+source is not reported stale.
+
 Two rules make a metric set work well:
 
 1. **Pick signals that move for different reasons but fail together.** The

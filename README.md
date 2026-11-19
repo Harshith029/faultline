@@ -223,6 +223,17 @@ explicitly with `options.metrics`. The source checks its metric keys against
 `detector.metrics` at startup and refuses to run if it cannot supply them, rather
 than collecting forever and detecting nothing.
 
+Each CloudWatch sample comes from a single period. CloudWatch publishes each
+metric on its own schedule, so the newest latency datapoint can be a period
+ahead of the newest 4XX count, and pairing each metric's newest value would
+build a sample no single period produced. The source reads the last three whole
+periods — the window is aligned to `options.periodSeconds` (default 60), so the
+period still in progress is never read half-filled — and takes every value from
+the newest period in which every configured metric has a datapoint, stamped with
+that period's time. If no period in the window has them all, it sends what the
+newest period has and leaves the rest missing — never zero — so the detector
+rejects the sample as incomplete for any service that needs a missing metric.
+
 Then run it, with secrets supplied by the environment — never committed:
 
 ```bash
