@@ -10,7 +10,7 @@
   <a href="https://github.com/Harshith029/faultline/actions/workflows/ci.yml"><img src="https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
   <a href="packages/agent/package.json"><img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg" alt="Zero runtime dependencies"></a>
-  <img src="https://img.shields.io/badge/tests-397%20passing-brightgreen.svg" alt="397 tests passing">
+  <img src="https://img.shields.io/badge/tests-408%20passing-brightgreen.svg" alt="408 tests passing">
   <img src="https://img.shields.io/badge/node-%E2%89%A522.12-339933.svg" alt="Node 22.12 or newer">
 </p>
 
