@@ -41,7 +41,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      placeholder: Node 20.19, Ubuntu 24.04, Docker image, Kubernetes…
+      placeholder: Node 24.11, Ubuntu 24.04, Docker image, Kubernetes…
     validations:
       required: true
 

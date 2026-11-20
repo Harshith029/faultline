@@ -55,8 +55,14 @@ const hostnameOf = (hostHeader = '') => {
 const WRITE_ROUTES = [
   (method, path) => method === 'POST' && path === '/api/silences',
   (method, path) => method === 'DELETE' && path.startsWith('/api/silences/'),
+  (method, path) => method === 'DELETE' && path.startsWith('/api/services/'),
   (method, path) => method === 'POST' && path === '/api/inject',
 ]
+
+// Orchestrator probes. Always anonymous and answerable on any Host header: a
+// kubelet or load balancer probes before any credential exists, addresses the
+// pod by IP, and the responses carry no telemetry.
+const PROBE_PATHS = new Set(['/health', '/livez'])
 
 const isWrite = (method, path) => WRITE_ROUTES.some((test) => test(method, path))
 
@@ -89,6 +95,9 @@ export function renderPrometheusMetrics(agent) {
     '# HELP faultline_up Whether the FAULTLINE agent is running.',
     '# TYPE faultline_up gauge',
     'faultline_up 1',
+    '# HELP faultline_live Whether the collection loop is making progress (the /livez check).',
+    '# TYPE faultline_live gauge',
+    `faultline_live ${snapshot.liveness.status === 'ok' ? 1 : 0}`,
     '# HELP faultline_ticks_total Collection cycles completed.',
     '# TYPE faultline_ticks_total counter',
     `faultline_ticks_total ${snapshot.ticks}`,
@@ -104,6 +113,23 @@ export function renderPrometheusMetrics(agent) {
     '# HELP faultline_services_rejected_total Samples refused because detector.maxServices was reached.',
     '# TYPE faultline_services_rejected_total counter',
     `faultline_services_rejected_total ${snapshot.dataQuality.servicesRejected}`,
+    '# HELP faultline_samples_dropped_total Valid samples not buffered because they could not extend the series.',
+    '# TYPE faultline_samples_dropped_total counter',
+    `faultline_samples_dropped_total{reason="duplicate"} ${snapshot.dataQuality.duplicateSamples}`,
+    `faultline_samples_dropped_total{reason="out_of_order"} ${snapshot.dataQuality.outOfOrderSamples}`,
+    '# HELP faultline_sample_gaps_total Accepted samples that arrived after a hole; sustained runs restart there.',
+    '# TYPE faultline_sample_gaps_total counter',
+    `faultline_sample_gaps_total ${snapshot.dataQuality.sampleGaps}`,
+    '# HELP faultline_history_resets_total Services whose history was discarded after a hole longer than the buffer.',
+    '# TYPE faultline_history_resets_total counter',
+    `faultline_history_resets_total ${snapshot.dataQuality.historyResets}`,
+    '# HELP faultline_evaluation_errors_total Per-service evaluations that failed and were skipped.',
+    '# TYPE faultline_evaluation_errors_total counter',
+    `faultline_evaluation_errors_total ${snapshot.dataQuality.evaluationErrors}`,
+    '# HELP faultline_services_retired_total Services removed from tracking. reason="silent" also removed a stale-telemetry alarm: alert on it.',
+    '# TYPE faultline_services_retired_total counter',
+    `faultline_services_retired_total{reason="operator"} ${snapshot.retiredServices.operator ?? 0}`,
+    `faultline_services_retired_total{reason="silent"} ${snapshot.retiredServices.silent ?? 0}`,
     '# HELP faultline_telemetry_healthy Whether the agent is observing valid telemetry (distinct from faultline_up).',
     '# TYPE faultline_telemetry_healthy gauge',
     `faultline_telemetry_healthy ${snapshot.health.status === 'ok' ? 1 : 0}`,
@@ -146,6 +172,8 @@ export function renderPrometheusMetrics(agent) {
   lines.push('# HELP faultline_incidents_total Incidents recorded since first run.')
   lines.push('# TYPE faultline_incidents_total gauge')
   lines.push(`faultline_incidents_total ${snapshot.incidents.total}`)
+  lines.push('# HELP faultline_incidents_open Incidents currently firing.')
+  lines.push('# TYPE faultline_incidents_open gauge')
   lines.push(`faultline_incidents_open ${snapshot.incidents.firing}`)
 
   return lines.join('\n') + '\n'
@@ -181,7 +209,7 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
       // and become same-origin with a token-less agent. The Host header still
       // carries the hostile name, so an unauthenticated agent answers only to
       // loopback names. With a token, the token is the control.
-      if (!auth.enabled && url.pathname !== '/health' && !isLoopbackHost(hostnameOf(req.headers.host))) {
+      if (!auth.enabled && !PROBE_PATHS.has(url.pathname) && !isLoopbackHost(hostnameOf(req.headers.host))) {
         logger.warn('server.host_refused', { route, host: req.headers.host ?? null })
         return json(res, 421, { error: 'unauthenticated agent only answers to a loopback Host header' })
       }
@@ -196,7 +224,7 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
 
       const refusal = auth.authorize(req, {
         write,
-        anonymous: url.pathname === '/health',
+        anonymous: PROBE_PATHS.has(url.pathname),
       })
       if (refusal) {
         logger.warn('server.unauthorized', { route, status: refusal.status })
@@ -206,6 +234,20 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
         return json(res, refusal.status, { error: refusal.error })
       }
 
+      // Liveness: the process is up and its loop is making progress. Never fails
+      // because telemetry is missing, so an orchestrator restarting on it cannot
+      // loop on an exporter outage. Point livenessProbe here, not at /health.
+      if (route === 'GET /livez') {
+        const liveness = agent.liveness()
+        return json(res, liveness.status === 'ok' ? 200 : 503, {
+          status: liveness.status,
+          reasons: liveness.reasons,
+          tickInFlightSeconds: liveness.tickInFlightSeconds,
+          stallSeconds: liveness.stallSeconds,
+          lastTickCompletedAt: liveness.lastTickCompletedAt,
+        })
+      }
+
       if (route === 'GET /health') {
         const snapshot = agent.snapshot()
         const health = snapshot.health
@@ -213,7 +255,8 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
         return json(res, healthy ? 200 : 503, {
           status: health.status,
           // "The process is up" and "the telemetry is trustworthy" are separate
-          // claims. A probe that only ever saw the first is how a silent
+          // claims, served separately: /livez answers the first, this the
+          // second. A probe that only ever saw the first is how a silent
           // exporter failure gets mistaken for a quiet night.
           reasons: health.reasons,
           agent: snapshot.name,
@@ -302,13 +345,41 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
       }
 
       if (req.method === 'DELETE' && url.pathname.startsWith('/api/silences/')) {
-        const id = decodeURIComponent(url.pathname.split('/').pop())
+        let id
+        try {
+          id = decodeURIComponent(url.pathname.split('/').pop())
+        } catch {
+          return json(res, 400, { error: 'silence id is not valid percent-encoding' })
+        }
         if (id.startsWith('cfg:')) {
           return json(res, 400, { error: 'config-defined silences cannot be removed at runtime' })
         }
         if (!agent.silences.remove(id)) return json(res, 404, { error: 'silence not found' })
         agent.syncSilences()
         return json(res, 200, { removed: id })
+      }
+
+      // Retires a service: a decommissioned one otherwise keeps /health
+      // degraded as stale for as long as the agent runs. An open incident on it
+      // is closed as "retired", with no resolve notification.
+      if (req.method === 'DELETE' && url.pathname.startsWith('/api/services/')) {
+        let service
+        try {
+          service = decodeURIComponent(url.pathname.slice('/api/services/'.length))
+        } catch {
+          return json(res, 400, { error: 'service name is not valid percent-encoding' })
+        }
+        if (!service) return json(res, 400, { error: 'service name required: DELETE /api/services/<name>' })
+        let retired
+        try {
+          retired = await agent.retireService(service, { reason: 'operator' })
+        } catch (err) {
+          if (err.code !== 'AGENT_BUSY') throw err
+          res.setHeader('Retry-After', '5')
+          return json(res, 503, { error: err.message })
+        }
+        if (!retired) return json(res, 404, { error: `service "${service}" is not tracked` })
+        return json(res, 200, { retired: retired.service, incidentClosed: retired.incidentClosed })
       }
 
       if (route === 'GET /metrics') {

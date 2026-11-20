@@ -29,7 +29,12 @@ const configFor = (metrics) =>
     description: COPY[metric]?.description ?? `${metricMeta(metric).label} drift`,
   }))
 
-export default function DriftChart({ windows, activeWindow, metrics = DEFAULT_PARAMS.metrics }) {
+export default function DriftChart({
+  windows,
+  activeWindow,
+  metrics = DEFAULT_PARAMS.metrics,
+  threshold = DEFAULT_PARAMS.zThreshold,
+}) {
   const METRIC_CONFIG = configFor(metrics)
   const chartData = windows.map(window => ({
     window: window.window_number,
@@ -95,7 +100,7 @@ export default function DriftChart({ windows, activeWindow, metrics = DEFAULT_PA
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
             <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5">Auto scale (min 0-10)</span>
-            <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-amber-200">Threshold z=2</span>
+            <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-amber-200">Threshold z={threshold}</span>
             {cascadeWindow && (
               <span className="rounded-full border border-rose-400/20 bg-rose-400/10 px-3 py-1.5 text-rose-200">
                 Cascade marker W{cascadeWindow}
@@ -155,7 +160,9 @@ export default function DriftChart({ windows, activeWindow, metrics = DEFAULT_PA
               />
 
               <YAxis
-                domain={[0, (dataMax) => Math.max(10, Math.ceil(dataMax * 1.05))]}
+                // Below zero too: z keeps its sign, and a metric whose failure
+                // is a fall drifts downward. A floor of 0 clipped it off-chart.
+                domain={[(dataMin) => Math.min(0, Math.floor(dataMin)), (dataMax) => Math.max(10, Math.ceil(dataMax * 1.05))]}
                 axisLine={false}
                 tickLine={false}
                 stroke="#64748b"
@@ -178,11 +185,11 @@ export default function DriftChart({ windows, activeWindow, metrics = DEFAULT_PA
               />
 
               <ReferenceLine
-                y={2.0}
+                y={threshold}
                 stroke="#F59E0B"
                 strokeDasharray="6 4"
                 strokeWidth={1.5}
-                label={{ value: 'Threshold z=2', position: 'right', fill: '#F59E0B', fontSize: 11 }}
+                label={{ value: `Threshold z=${threshold}`, position: 'right', fill: '#F59E0B', fontSize: 11 }}
               />
 
               {cascadeWindow && (

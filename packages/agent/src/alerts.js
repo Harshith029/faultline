@@ -36,6 +36,31 @@ export class AlertManager {
     return state
   }
 
+  isFiring(service) {
+    return this.states.get(service)?.status === 'firing'
+  }
+
+  /**
+   * Forgets a service's lifecycle state. If an incident is open it is returned
+   * closed as `retired`, never `resolved`: the service was taken out of
+   * monitoring, not observed to recover, and a resolve would tell whoever was
+   * paged that it had.
+   */
+  retire(service, nowMs = Date.now()) {
+    const state = this.states.get(service)
+    this.states.delete(service)
+    if (state?.status !== 'firing' || !state.incident) return null
+
+    const endedAt = new Date(nowMs).toISOString()
+    return {
+      ...state.incident,
+      status: 'retired',
+      endedAt,
+      endReason: 'service_retired',
+      durationMs: nowMs - Date.parse(state.incident.startedAt),
+    }
+  }
+
   snapshot() {
     return [...this.states.entries()].map(([service, s]) => ({
       service,

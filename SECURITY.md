@@ -79,8 +79,16 @@ computation.
   is a startup error, because config files get committed.
 - **TLS fails closed.** A configured but unreadable certificate stops the agent
   starting rather than silently downgrading to plaintext.
-- **`/health` is deliberately anonymous.** Probes must reach it before any
-  credential exists; it exposes no telemetry.
+- **`/health` and `/livez` are deliberately anonymous.** Probes must reach
+  them before any credential exists, and they answer on any `Host` header
+  because kubelets probe by pod IP. Neither exposes telemetry.
+- **Retiring a service is a write.** `DELETE /api/services/:name` removes a
+  service from health and ranking, so it needs the full token and passes the
+  same cross-origin checks as creating a silence.
+- **Bedrock cannot be enabled on an anonymous Lambda API.** The template's
+  `NoBedrockOnAnonymousApi` rule refuses `ApiAuthMode=none` with a model
+  configured, so no anonymous caller can cause billed model invocations; the
+  dashboard also fetches the API's explanation only when asked.
 - **Request bodies are capped** at 64 KB.
 - **Loopback is not treated as a trust boundary against the browser.** A page
   in the operator's browser can reach `127.0.0.1`, so the token-less agent

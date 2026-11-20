@@ -10,8 +10,8 @@
   <a href="https://github.com/Harshith029/faultline/actions/workflows/ci.yml"><img src="https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
   <a href="packages/agent/package.json"><img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg" alt="Zero runtime dependencies"></a>
-  <img src="https://img.shields.io/badge/tests-327%20passing-brightgreen.svg" alt="327 tests passing">
-  <img src="https://img.shields.io/badge/node-%E2%89%A520.19-339933.svg" alt="Node 20.19 or newer">
+  <img src="https://img.shields.io/badge/tests-397%20passing-brightgreen.svg" alt="397 tests passing">
+  <img src="https://img.shields.io/badge/node-%E2%89%A522.12-339933.svg" alt="Node 22.12 or newer">
 </p>
 
 <p align="center">
@@ -76,7 +76,8 @@ While it runs, the agent is serving a real API:
 
 ```bash
 curl localhost:8787/api/ranking     # services ordered by current risk — start here
-curl localhost:8787/health          # liveness *and* telemetry validity, with freshness
+curl localhost:8787/livez           # liveness: the process and its collection loop are alive
+curl localhost:8787/health          # telemetry readiness, with per-service freshness
 curl localhost:8787/api/state       # current risk score per service
 curl localhost:8787/api/incidents   # incident history
 curl localhost:8787/metrics         # Prometheus exposition format
@@ -180,6 +181,8 @@ The engine enforces the same rule on its own: `runDetection` throws on a window 
 
 A collection that succeeds but returns nothing is counted as empty, not as a healthy tick, and after `detector.noDataGraceSeconds` (default 300) the agent reports `degraded` with a 503. A previously healthy service that becomes stale also degrades `/health`, even if another service is still reporting. Freshness follows the time the source says the data was observed — the HTTP source's per-row `timestamp`, CloudWatch's datapoint time — rather than when the agent fetched it, so replayed old samples cannot keep monitoring green. Prometheus instant queries only report their evaluation time, so for that source freshness relies on Prometheus's own staleness handling: a target that stops reporting drops out of the result after the lookback window (5 minutes by default) and the service then goes stale here. `faultline_telemetry_healthy`, `faultline_seconds_since_data`, `faultline_incomplete_samples_total`, and per-service `faultline_service_stale_seconds` are all exported, so an exporter that quietly stops looks like a problem rather than a quiet night.
 
+**Sustained means sustained in time, not in array positions.** A sample whose source timestamp repeats one already counted (a replay) or goes backwards is dropped, and a hole longer than 1.5 × the service's own sample spacing (or `detector.maxSampleGapSeconds`) breaks a sustained run — two elevated minutes either side of a missing one never count as two consecutive windows. The engine applies the same rule from `window_number` and, given the sampling interval, from timestamps. Details: [docs/AGENT.md](docs/AGENT.md#time-continuity).
+
 **The API cannot be exposed unauthenticated.** It is open only when bound to loopback, which is what the quickstart does. Bind it anywhere else without a token and the agent **refuses to start** — `POST /api/silences` and `POST /api/inject` are a control plane, and a startup warning that still serves the request is not a control. Set a token to bind beyond localhost, with a separate read-only scope so Prometheus can scrape metrics without being able to silence your alerts:
 
 ```bash
@@ -187,7 +190,7 @@ export FAULTLINE_API_TOKEN=$(openssl rand -hex 32)
 export FAULTLINE_READ_TOKEN=$(openssl rand -hex 32)
 ```
 
-`GET /health` stays anonymous so load balancer probes keep working. TLS is built in (`server.tls`) and the agent refuses to start if a configured certificate is unreadable, rather than silently serving plaintext.
+`GET /health` and `GET /livez` stay anonymous so probes keep working. Point liveness probes at `/livez`: it never fails just because telemetry is missing, so a quiet exporter cannot turn into a restart loop. TLS is built in (`server.tls`) and the agent refuses to start if a configured certificate is unreadable, rather than silently serving plaintext.
 
 **Loopback stops other machines, not other websites.** A page open in your browser can send requests to `127.0.0.1`, so the token-less default defends itself against the browser too: a write carrying a foreign `Origin` header is refused (`403`), creating a silence requires `Content-Type: application/json` (which a page cannot send cross-origin without a preflight), and without a token the agent only answers to a loopback `Host` header, which defeats DNS rebinding. Browser access is off entirely by default (`server.corsOrigin: null`); list an origin explicitly to allow one. curl, scripts and Prometheus send no `Origin` and are unaffected.
 
@@ -372,6 +375,8 @@ An incident-analysis UI over the same engine: scrub a cascade window by window, 
 | `detector.direction` | `null` | Per-metric bad direction: `up` (default), `down`, `both` |
 | `detector.statistic` | `mean_sigma` | `median_mad` for robust baseline statistics |
 | `detector.maxServices` | `1000` | Distinct services tracked; new ones beyond it are refused, counted, and degrade `/health` |
+| `detector.maxSampleGapSeconds` | `null` (1.5 × the service's own spacing) | Spacing beyond which two samples are not adjacent; a sustained run restarts after the hole |
+| `detector.retireAfterSeconds` | `null` (never) | Stop tracking a service that has been silent this long; never one with an open incident |
 | `server.corsOrigin` | `null` | Browser origins allowed to read the API; browser writes need an origin listed explicitly |
 | `alerting.cooldownSeconds` | `300` | Hold paging for a re-trigger after resolution (still recorded) |
 | `alerting.resolveAfterWindows` | `3` | Clean windows required to resolve |

@@ -12,6 +12,42 @@ import { createAuthenticator, isLoopbackHost } from './auth.js'
 
 export const VERSION = '1.0.0'
 
+// How many notifications a tick sends at once. A webhook that times out costs
+// seconds; sending one incident's alert after another made a burst of N
+// incidents cost N timeouts. Bounded rather than unbounded so a large burst
+// does not hammer a rate-limited receiver (Slack accepts about one per second).
+export const DELIVERY_CONCURRENCY = 4
+
+// A collection that has been in flight this many intervals (and at least the
+// minimum below) is treated as wedged, and liveness fails so the process can
+// be restarted. Sources and notifiers all carry their own timeouts, so a tick
+// that runs this long is stuck, not slow.
+const LIVENESS_STALL_INTERVALS = 5
+const LIVENESS_STALL_MIN_SECONDS = 60
+
+// How long a retirement request waits for a collection in flight. A wedged
+// collection is exactly what /livez reports; the request must not hang on it.
+const RETIRE_WAIT_MS = 10_000
+const MAX_RECENT_RETIREMENTS = 20
+
+/** The agent cannot act on a request right now; retrying shortly may succeed. */
+export class AgentBusyError extends Error {
+  constructor(message) {
+    super(message)
+    this.name = 'AgentBusyError'
+    this.code = 'AGENT_BUSY'
+  }
+}
+
+// Resolves true if `promise` settles within `ms`, false otherwise.
+const settlesWithin = (promise, ms) => {
+  let timer
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), ms)
+  })
+  return Promise.race([promise.then(() => true), timeout]).finally(() => clearTimeout(timer))
+}
+
 /**
  * Refuses to start an unauthenticated API on anything but loopback.
  *
@@ -50,6 +86,8 @@ export class FaultlineAgent {
       params: detectorParams(config),
       resolveParams: createParamsResolver(detectorParams(config), this.serviceRules),
       historyWindows: config.detector.historyWindows,
+      intervalSeconds: config.detector.intervalSeconds,
+      maxSampleGapSeconds: config.detector.maxSampleGapSeconds ?? null,
       maxServices: config.detector.maxServices,
       logger: this.logger,
     })
@@ -70,12 +108,20 @@ export class FaultlineAgent {
       this.signalStopRequested = resolve
     })
     this.tickDone = null
+    this.tickStartedAtMs = null
+    this.lastTickCompletedAtMs = null
     this.ticks = 0
     this.collectErrors = 0
     this.consecutiveCollectErrors = 0
     this.lastCollectAt = null
     this.startedAtMs = null
     this.latest = new Map()
+    // By reason, because the two mean different things: an operator retiring a
+    // decommissioned service is housekeeping, while a silent retirement also
+    // removed that service's stale-telemetry alarm and is worth alerting on.
+    this.retiredServices = { operator: 0, silent: 0 }
+    this.recentRetirements = []
+    this.retireWaitMs = RETIRE_WAIT_MS
 
     // A successful HTTP call that returns nothing is not the same as telemetry.
     // These track "did we actually observe anything" independently of "did the
@@ -84,16 +130,24 @@ export class FaultlineAgent {
     this.consecutiveEmptyCollections = 0
     this.lastDataAtMs = null
     this.noDataGraceSeconds = config.detector.noDataGraceSeconds
+    this.retireAfterSeconds = config.detector.retireAfterSeconds ?? null
   }
 
   /**
-   * Health distinguishes three things that a single boolean would conflate:
+   * Telemetry readiness: is the agent observing trustworthy telemetry? Served
+   * at /health. It distinguishes three things a single boolean would conflate:
    * the process is alive, collection is succeeding, and the data is usable.
    *
    * An exporter rename or a permissions regression produces a perfectly
    * successful collection that observes nothing. Reporting that as `ok` is what
    * makes telemetry loss look like good news, so it degrades once the grace
    * period has passed.
+   *
+   * Staleness is counted in whole seconds, rounded down, and is degraded only
+   * once it exceeds the grace period: the same rule the per-service check uses,
+   * and one that does not flip on which millisecond a probe happens to land in.
+   *
+   * None of this belongs in a liveness probe — see liveness().
    */
   health(nowMs = Date.now()) {
     const reasons = []
@@ -105,7 +159,8 @@ export class FaultlineAgent {
     // Measured from the last observation, or from startup if there has never
     // been one, so a source that is broken from the first tick still degrades.
     const sinceDataMs = nowMs - (this.lastDataAtMs ?? this.startedAtMs ?? nowMs)
-    const noDataTooLong = this.startedAtMs !== null && sinceDataMs > graceMs
+    const secondsSinceData = Math.floor(sinceDataMs / 1000)
+    const noDataTooLong = this.startedAtMs !== null && secondsSinceData > this.noDataGraceSeconds
     if (noDataTooLong) {
       reasons.push(this.lastDataAtMs === null ? 'no_telemetry_since_start' : 'telemetry_stale')
     }
@@ -113,7 +168,7 @@ export class FaultlineAgent {
     // A collection can still contain valid samples while one previously seen
     // service has vanished. Global freshness alone would call that healthy and
     // hide the partial outage. Once a service has supplied a complete sample,
-    // it becomes an expected telemetry target until the agent restarts.
+    // it is an expected telemetry target until it returns or is retired.
     const staleServices = this.detector
       .freshness(nowMs)
       .filter((entry) => Number.isFinite(entry.staleSeconds) && entry.staleSeconds > this.noDataGraceSeconds)
@@ -128,10 +183,38 @@ export class FaultlineAgent {
     return {
       status: reasons.length === 0 ? 'ok' : 'degraded',
       reasons,
-      secondsSinceData: this.startedAtMs === null ? null : Math.round(sinceDataMs / 1000),
+      secondsSinceData: this.startedAtMs === null ? null : secondsSinceData,
       noDataGraceSeconds: this.noDataGraceSeconds,
       lastDataAt: this.lastDataAtMs ? new Date(this.lastDataAtMs).toISOString() : null,
       staleServices,
+    }
+  }
+
+  /**
+   * Process liveness: is the agent running and is its collection loop still
+   * making progress? Served at /livez.
+   *
+   * Deliberately blind to telemetry. Restarting the agent cannot bring back an
+   * exporter that is down or a service that was decommissioned, so wiring those
+   * into a liveness probe only turns a telemetry problem into a restart loop.
+   * A collection stuck on a socket is different: the loop has stopped, and a
+   * restart is exactly the cure.
+   */
+  liveness(nowMs = Date.now()) {
+    const reasons = []
+    if (!this.running) reasons.push('agent_stopped')
+
+    const stallSeconds = Math.max(LIVENESS_STALL_INTERVALS * this.intervalSeconds, LIVENESS_STALL_MIN_SECONDS)
+    const tickInFlightSeconds =
+      this.ticking && this.tickStartedAtMs !== null ? Math.floor((nowMs - this.tickStartedAtMs) / 1000) : null
+    if (tickInFlightSeconds !== null && tickInFlightSeconds > stallSeconds) reasons.push('collection_stalled')
+
+    return {
+      status: reasons.length === 0 ? 'ok' : 'failing',
+      reasons,
+      tickInFlightSeconds,
+      stallSeconds,
+      lastTickCompletedAt: this.lastTickCompletedAtMs ? new Date(this.lastTickCompletedAtMs).toISOString() : null,
     }
   }
 
@@ -159,10 +242,14 @@ export class FaultlineAgent {
     const ageSeconds = Math.round((nowMs - savedAtMs) / 1000)
     if (nowMs - savedAtMs > maxAgeMs) return { restored: false, reason: 'stale', ageSeconds }
 
+    const buffers = this.detector.hydrateBuffers(state.buffers, { nowMs })
     return {
       restored: true,
       ageSeconds,
-      samples: this.detector.hydrateBuffers(state.buffers),
+      samples: buffers.samples,
+      // Samples that no longer satisfy the current metric configuration, or
+      // were out of order, are discarded rather than scored.
+      samplesDropped: buffers.dropped,
       services: this.alerts.hydrate(state.alerts),
     }
   }
@@ -181,6 +268,79 @@ export class FaultlineAgent {
     this.silences.prune()
     this.store.silences = this.silences.persistable()
     this.store.markDirty()
+  }
+
+  /**
+   * Stops tracking a service: its buffer, detection state, freshness and
+   * ranking entry are dropped, so a decommissioned service no longer holds
+   * /health degraded. Returns null if the agent did not know the service.
+   *
+   * An open incident is closed as `retired`, not `resolved`, and no
+   * notification is sent: nothing was observed to recover, and FAULTLINE never
+   * reports a recovery it did not see.
+   *
+   * Synchronous, so it must only run between ticks or inside one; the API goes
+   * through retireService(), which waits for an in-flight tick first.
+   */
+  retireServiceNow(service, { reason = 'operator', nowMs = Date.now(), snapshot = true } = {}) {
+    const known = this.detector.retire(service)
+    const hadResult = this.latest.delete(service)
+    const incident = this.alerts.retire(service, nowMs)
+    if (!known && !hadResult && !incident) return null
+
+    if (incident) {
+      this.store.upsertIncident(incident)
+      this.logger.warn('incident.retired', {
+        incident: incident.id,
+        service,
+        reason,
+        message: 'service retired while its incident was open; closed without a resolve notification',
+      })
+    }
+    this.retiredServices = { ...this.retiredServices, [reason]: (this.retiredServices[reason] ?? 0) + 1 }
+    this.recentRetirements = [
+      { service, reason, at: new Date(nowMs).toISOString(), incidentClosed: incident?.id ?? null },
+      ...this.recentRetirements,
+    ].slice(0, MAX_RECENT_RETIREMENTS)
+    this.logger.info('service.retired', { service, reason, incidentClosed: incident?.id ?? null })
+    // Saved straight away, so a crash before the next periodic snapshot cannot
+    // restore the service it was just told to forget.
+    if (snapshot) this.snapshotDetectionState()
+    return { service, reason, incidentClosed: incident?.id ?? null }
+  }
+
+  /**
+   * Retires a service on request, once any collection in flight has finished.
+   * Bounded: if the collection is wedged — the case /livez reports — this
+   * gives up after `waitMs` with an AgentBusyError instead of hanging with it.
+   */
+  async retireService(service, { waitMs = this.retireWaitMs, ...options } = {}) {
+    const deadline = Date.now() + waitMs
+    while (this.ticking && this.tickDone) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 0 || !(await settlesWithin(this.tickDone, remaining))) {
+        throw new AgentBusyError('a collection is still in progress; retry once it has finished')
+      }
+    }
+    return this.retireServiceNow(service, options)
+  }
+
+  /**
+   * Retires services that have sent nothing for `detector.retireAfterSeconds`.
+   * Off unless configured. A service with an open incident is never retired
+   * automatically: one that is firing and then goes silent is exactly the one a
+   * human needs to look at.
+   */
+  retireSilentServices(nowMs = Date.now()) {
+    if (!this.retireAfterSeconds) return []
+    const retired = []
+    for (const service of this.detector.silentFor(this.retireAfterSeconds, nowMs)) {
+      if (this.alerts.isFiring(service)) continue
+      const outcome = this.retireServiceNow(service, { reason: 'silent', nowMs, snapshot: false })
+      if (outcome) retired.push(outcome)
+    }
+    if (retired.length > 0) this.snapshotDetectionState()
+    return retired
   }
 
   /**
@@ -229,8 +389,8 @@ export class FaultlineAgent {
 
     const report = await this.notifiers.notify(event, { skip: incident.deliveredTo ?? [] })
     // These can only be set after the await. Two notifications for one incident
-    // cannot interleave: ticks are serialised by the `ticking` guard and a tick
-    // handles each service once.
+    // cannot interleave: ticks are serialised by the `ticking` guard, a tick
+    // handles each service once, and a service has at most one incident.
     incident.deliveredTo = [...(incident.deliveredTo ?? []), ...(report?.delivered ?? [])]
     const failed = report?.failed ?? []
     if (failed.length > 0) {
@@ -246,6 +406,31 @@ export class FaultlineAgent {
     return true
   }
 
+  /**
+   * Sends a tick's notifications, DELIVERY_CONCURRENCY at a time.
+   *
+   * The tick still waits for all of them: an incident's delivery state has to
+   * be settled before the next tick decides whether to retry it. What changes is
+   * the cost of a slow receiver — a burst of N incidents now costs roughly
+   * ceil(N / DELIVERY_CONCURRENCY) notifier timeouts instead of N.
+   */
+  async deliver(jobs) {
+    let next = 0
+    const worker = async () => {
+      while (next < jobs.length) {
+        const { type, incident } = jobs[next++]
+        try {
+          await this.maybeNotify(type, incident)
+        } catch (err) {
+          // Notifiers report failures rather than throw, so this is a bug; it
+          // must still not abandon the other incidents' deliveries.
+          this.logger.error('notify.delivery_error', { incident: incident.id, message: err.message })
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(DELIVERY_CONCURRENCY, jobs.length) }, worker))
+  }
+
   async start() {
     await this.store.load()
     this.silences.hydrate(this.store.silences)
@@ -256,6 +441,7 @@ export class FaultlineAgent {
         ageSeconds: this.stateRestore.ageSeconds,
         services: this.stateRestore.services,
         samples: this.stateRestore.samples,
+        samplesDropped: this.stateRestore.samplesDropped,
       })
     } else {
       this.logger.info('state.warming_up', { reason: this.stateRestore.reason })
@@ -339,6 +525,7 @@ export class FaultlineAgent {
       return
     }
     this.ticking = true
+    this.tickStartedAtMs = Date.now()
     let settle
     this.tickDone = new Promise((resolve) => {
       settle = resolve
@@ -377,14 +564,22 @@ export class FaultlineAgent {
         this.consecutiveEmptyCollections = 0
       }
 
-      const results = this.detector.ingest(samples)
+      // Samples without a source timestamp are stamped with the start of this
+      // collection cycle, not the moment they were parsed: consecutive cycles
+      // are then exactly one interval apart, however long collection took.
+      const results = this.detector.ingest(samples, { nowMs: this.tickStartedAtMs })
 
       // Only a sample that satisfied the complete-sample contract counts as
-      // data. A tick made entirely of incomplete samples leaves the clock running.
+      // data. A tick made entirely of incomplete or replayed samples leaves the
+      // clock running.
       if (results.some((r) => r.status !== 'incomplete_sample')) {
         this.lastDataAtMs = Date.now()
       }
 
+      // Alert state changes are decided for every service first; the slow part,
+      // notifier I/O, then runs for all of them together.
+      const deliveries = []
+      const touched = []
       for (const result of results) {
         this.latest.set(result.service, result)
         if (result.status !== 'evaluated') continue
@@ -399,16 +594,16 @@ export class FaultlineAgent {
             signals: outcome.incident.triggerSignalCount,
             heldUntil: outcome.incident.heldUntil ?? null,
           })
-          await this.maybeNotify('incident.opened', outcome.incident)
-          this.store.upsertIncident(outcome.incident)
+          deliveries.push({ type: 'incident.opened', incident: outcome.incident })
+          touched.push(outcome.incident)
         } else if (outcome.type === 'updated') {
           // An incident that was never fully sent — silenced, held by the
           // cooldown, or a notifier that failed — is announced (or retried) as
           // soon as nothing stops it, for as long as it is still firing.
           if (!outcome.incident.notifiedAt) {
-            await this.maybeNotify('incident.opened', outcome.incident)
+            deliveries.push({ type: 'incident.opened', incident: outcome.incident })
           }
-          this.store.upsertIncident(outcome.incident)
+          touched.push(outcome.incident)
         } else if (outcome.type === 'resolved') {
           this.logger.info('incident.resolved', {
             incident: outcome.incident.id,
@@ -417,11 +612,17 @@ export class FaultlineAgent {
             peakR: outcome.incident.peakR,
           })
           if (outcome.incident.notifiedAt || outcome.incident.deliveredTo?.length) {
-            await this.maybeNotify('incident.resolved', outcome.incident)
+            deliveries.push({ type: 'incident.resolved', incident: outcome.incident })
           }
-          this.store.upsertIncident(outcome.incident)
+          touched.push(outcome.incident)
         }
       }
+
+      await this.deliver(deliveries)
+      // Persisted after delivery so the stored record carries what was sent.
+      for (const incident of touched) this.store.upsertIncident(incident)
+
+      this.retireSilentServices()
 
       if (this.ticks % this.config.storage.snapshotEveryTicks === 0) {
         this.snapshotDetectionState()
@@ -431,6 +632,8 @@ export class FaultlineAgent {
     } finally {
       this.ticking = false
       this.tickDone = null
+      this.tickStartedAtMs = null
+      this.lastTickCompletedAtMs = Date.now()
       settle()
     }
   }
@@ -453,6 +656,9 @@ export class FaultlineAgent {
       }
       if (result.status === 'incomplete_sample') {
         return { ...base, missingMetrics: result.missing }
+      }
+      if (result.status === 'evaluation_failed') {
+        return { ...base, error: result.error }
       }
       if (result.status !== 'evaluated') {
         return { ...base, windowsRequired: result.windowsRequired }
@@ -490,8 +696,11 @@ export class FaultlineAgent {
       emptyCollections: this.emptyCollections,
       consecutiveEmptyCollections: this.consecutiveEmptyCollections,
       health: this.health(),
+      liveness: this.liveness(),
       dataQuality: this.detector.dataQuality(),
       services: services.sort((a, b) => a.service.localeCompare(b.service)),
+      retiredServices: this.retiredServices,
+      recentRetirements: this.recentRetirements,
       stateRestored: this.stateRestore ?? { restored: false, reason: 'not_started' },
       silences: this.silences.list({ activeOnly: true }).length,
       incidents: this.store.stats(),
@@ -595,8 +804,16 @@ export class FaultlineAgent {
       // A clean shutdown always saves, so a rolling deploy costs no warm-up.
       // Exactly once: the tick loop can no longer reach snapshotDetectionState.
       if (this.ticks > 0) this.snapshotDetectionState()
-      await this.store.close()
-      this.logger.info('agent.stopped', { ticks: this.ticks })
+      try {
+        await this.store.close()
+      } catch (err) {
+        // Shutdown still completes; the caller learns that state was not saved
+        // (the CLI exits non-zero) instead of the failure vanishing.
+        this.logger.error('agent.state_save_failed', { path: this.store.path, message: err.message })
+        throw err
+      } finally {
+        this.logger.info('agent.stopped', { ticks: this.ticks })
+      }
     })()
 
     return this.stopping

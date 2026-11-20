@@ -27,7 +27,7 @@
     "lint:iac": "node scripts/lintTemplate.mjs"
   },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=22.12.0"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

@@ -1,10 +1,12 @@
 import { DEFAULT_PARAMS, metricMeta } from '@faultline/core'
+import { evidenceZ, isElevated } from '../lib/signals'
 
 const ROW_COLORS = ['#3b82f6', '#f59e0b', '#ef4444', '#22c55e', '#a855f7', '#14b8a6']
 
 // One row per metric the engine scored, whatever those metrics are.
 const rowsFor = (metrics) =>
   metrics.map((metric, i) => ({
+    metric,
     key: metricMeta(metric).zKey,
     label: metricMeta(metric).label,
     color: ROW_COLORS[i % ROW_COLORS.length],
@@ -22,7 +24,12 @@ const getHeatColor = (z) => {
 const isQualified = (window, metricKey) =>
   window.qualified_signals?.some((signal) => signal.metric === metricKey) ?? false
 
-export default function SignalConvergenceHeatmap({ windows, activeWindow, metrics = DEFAULT_PARAMS.metrics }) {
+export default function SignalConvergenceHeatmap({
+  windows,
+  activeWindow,
+  metrics = DEFAULT_PARAMS.metrics,
+  params = DEFAULT_PARAMS,
+}) {
   const METRICS = rowsFor(metrics)
   const activeSignals =
     windows.find((window) => window.window_number === activeWindow)?.qualified_signals?.length ?? 0
@@ -58,10 +65,12 @@ export default function SignalConvergenceHeatmap({ windows, activeWindow, metric
           {windows.map((window) => (
             <div
               key={`hdr-${window.window_number}`}
+              title={window.gap_before ? 'Telemetry is missing just before this window; sustained runs restart here' : undefined}
               className={`flex-1 text-center text-[10px] font-medium uppercase tracking-[0.24em] ${
                 window.window_number === activeWindow ? 'text-white' : 'text-slate-500'
               }`}
             >
+              {window.gap_before && <span className="mr-0.5 text-amber-300">⋯</span>}
               W{window.window_number}
             </div>
           ))}
@@ -81,7 +90,11 @@ export default function SignalConvergenceHeatmap({ windows, activeWindow, metric
             </div>
 
             {windows.map((window) => {
+              // The number shown keeps its sign; the colour and emphasis follow
+              // the metric's bad direction and threshold, as the engine does.
               const z = window.metrics[metric.key]
+              const badZ = evidenceZ(window, metric.metric, params)
+              const elevated = isElevated(window, metric.metric, params)
               const qualified = isQualified(window, metric.key)
               const isActive = window.window_number === activeWindow
 
@@ -97,11 +110,11 @@ export default function SignalConvergenceHeatmap({ windows, activeWindow, metric
                     isActive ? 'shadow-[0_0_0_1px_rgba(96,165,250,0.15)]' : ''
                   }`}
                   style={{
-                    background: getHeatColor(z),
+                    background: getHeatColor(badZ),
                     border,
                   }}
                 >
-                  <span className={`text-[11px] font-semibold ${z >= 2.0 ? 'text-white' : 'text-slate-500'}`}>
+                  <span className={`text-[11px] font-semibold ${elevated ? 'text-white' : 'text-slate-500'}`}>
                     {z.toFixed(1)}
                   </span>
                   {qualified && (
@@ -115,7 +128,7 @@ export default function SignalConvergenceHeatmap({ windows, activeWindow, metric
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-        <span className="mr-1 text-slate-500">z-score intensity</span>
+        <span className="mr-1 text-slate-500">z in each metric&apos;s bad direction</span>
         <span className="rounded-full border border-white/10 bg-slate-950/60 px-3 py-1">
           <span className="mr-2 inline-block h-2.5 w-2.5 rounded-sm border border-white/10 bg-[#1a1d2e]" />
           &lt;1.0

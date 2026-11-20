@@ -46,22 +46,37 @@ Parameters:
       accident. 'iam' requires SigV4-signed requests. 'api-key' requires an
       x-api-key header and creates a usage plan with a daily quota. 'none'
       leaves the API open to the internet: every caller can read your detection
-      history, and if BedrockModelId is set, every caller can also cause billed
-      model invocations. Pick 'none' only for a throwaway public demo with
-      Bedrock disabled. Note that both authenticated modes require the dashboard
-      to sign or key its requests, which it does not do today.
+      history. 'none' with a BedrockModelId is refused at deploy time (see
+      Rules), because every caller could then cause billed model invocations.
+      Note that both authenticated modes require the dashboard to sign or key
+      its requests, which it does not do today (see DEPLOY.md).
 
   CorsAllowOrigin:
     Type: String
     Default: "'*'"
     Description: >
-      Origin allowed to call the API. Quote the value, e.g. "'https://app.example.com'".
+      The single origin allowed to read API responses (CORS permits one value,
+      not a list). Quote it, e.g. "'https://app.example.com'".
       The default of '*' is appropriate for a public read-only demo only.
 
   LogRetentionDays:
     Type: Number
     Default: 14
     Description: CloudWatch Logs retention for the function.
+
+Rules:
+  # The parameter descriptions used to *advise* against an open API with
+  # Bedrock enabled. Advice does not stop a deploy, and that combination lets
+  # anyone on the internet cause billed model invocations, so it is refused
+  # here before any resource is created.
+  NoBedrockOnAnonymousApi:
+    RuleCondition: !Equals [!Ref ApiAuthMode, 'none']
+    Assertions:
+      - Assert: !Equals [!Ref BedrockModelId, '']
+        AssertDescription: >-
+          ApiAuthMode 'none' leaves the API open to the internet, so every caller
+          could cause billed Bedrock invocations. Leave BedrockModelId empty for
+          a public demo, or choose ApiAuthMode 'api-key' or 'iam'.
 
 Conditions:
   ShouldCreateTable: !Equals [!Ref CreateTable, 'true']
@@ -128,6 +143,10 @@ Resources:
           TABLE_NAME: !Ref TableName
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           LIVE_API_NAME: !Ref LiveApiName
+          # The same origin the CORS preflight answers with, so the actual
+          # response agrees with it. Quotes required by SAM's Cors syntax are
+          # stripped here.
+          CORS_ALLOW_ORIGIN: !Join ['', !Split ["'", !Ref CorsAllowOrigin]]
           NODE_OPTIONS: '--enable-source-maps'
       Policies:
         - Version: '2012-10-17'
@@ -230,6 +249,6 @@ Outputs:
 
   BedrockEnabled:
     Description: >
-      Whether a Bedrock model is configured. If this is true and ApiAuthModeOut
-      is 'none', unauthenticated callers can cause billed model invocations.
+      Whether a Bedrock model is configured. The NoBedrockOnAnonymousApi rule
+      means this can only be true when ApiAuthModeOut is 'api-key' or 'iam'.
     Value: !If [HasBedrock, 'true', 'false']

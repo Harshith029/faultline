@@ -68,11 +68,19 @@ function webhookNotifier(config, { logger }) {
 
 function fileNotifier(config) {
   const path = resolve(config.path)
+  // Deliveries for different incidents run concurrently. Appends are chained so
+  // two events can never interleave inside one JSONL line.
+  let tail = Promise.resolve()
   return {
     type: 'file',
-    async send(event) {
-      await mkdir(dirname(path), { recursive: true })
-      await appendFile(path, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n', 'utf8')
+    send(event) {
+      const line = JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n'
+      const write = tail.then(async () => {
+        await mkdir(dirname(path), { recursive: true })
+        await appendFile(path, line, 'utf8')
+      })
+      tail = write.catch(() => {})
+      return write
     },
   }
 }

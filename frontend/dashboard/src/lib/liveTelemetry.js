@@ -18,8 +18,20 @@ export function liveParamsFor(response) {
   return {
     ...DEFAULT_PARAMS,
     metrics,
+    // Live windows are one minute apart. Declaring it lets the engine see a
+    // missing minute in the timestamps, so a sustained run cannot span it.
+    windowSeconds: Number(response?.window_seconds) > 0 ? Number(response.window_seconds) : 60,
     sigmaFloorAbs: Object.fromEntries(
       metrics.filter((m) => m in LIVE_SIGMA_FLOORS).map((m) => [m, LIVE_SIGMA_FLOORS[m]])
     ),
   }
 }
+
+/**
+ * The API numbers live windows by their minute in the hour, so a missing minute
+ * shows as a jump (58, 60). The dashboard addresses windows by position, so
+ * they are renumbered 1..n for display, keeping the minute as `minute_slot`.
+ * Adjacency is still enforced from the timestamps through windowSeconds.
+ */
+export const toPositionalWindows = (raw) =>
+  raw.map((window, i) => ({ ...window, minute_slot: window.window_number, window_number: i + 1 }))

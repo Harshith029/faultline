@@ -1,4 +1,7 @@
-import { DEFAULT_PARAMS, metricMeta } from '@faultline/core'
+import { DEFAULT_PARAMS, metricDirection, metricMeta, metricThreshold } from '@faultline/core'
+import { isElevated } from '../lib/signals'
+
+const DIRECTION_NOTES = { down: 'a fall is the problem', both: 'either direction is a problem' }
 
 const fmt = (x, n = 2) => Number(x).toFixed(n)
 
@@ -60,7 +63,16 @@ export default function DetectionEnginePanel({ engine, activeWindow, comparison,
           const z = w.metrics[meta.zKey]
           const sig = qualified.find((s) => s.metric === meta.zKey)
           const isQualified = Boolean(sig)
-          const elevated = z >= params.zThreshold
+          // The engine's test: past this metric's own threshold, in its bad
+          // direction. A raw `z >= zThreshold` called every falling metric
+          // nominal even when the engine had qualified it.
+          const elevated = isElevated(w, key, params)
+          const threshold = metricThreshold(key, params)
+          const directionNote = DIRECTION_NOTES[metricDirection(key, params)]
+          const ruleNote = [
+            directionNote,
+            threshold !== params.zThreshold ? `qualifies at ${fmt(threshold, 1)}σ` : null,
+          ].filter(Boolean)
           const tone = isQualified
             ? 'text-rose-300'
             : elevated
@@ -77,7 +89,12 @@ export default function DetectionEnginePanel({ engine, activeWindow, comparison,
               key={key}
               className="grid grid-cols-[1.2fr,0.8fr,1.4fr,0.9fr] items-center gap-2 border-b border-white/5 px-4 py-3 text-sm last:border-0"
             >
-              <span className="font-medium text-slate-200">{meta.label}</span>
+              <span className="font-medium text-slate-200">
+                {meta.label}
+                {ruleNote.length > 0 && (
+                  <span className="block text-[10px] font-normal text-slate-500">{ruleNote.join(' · ')}</span>
+                )}
+              </span>
               <span className="font-mono text-slate-300">
                 {fmt(raw, digitsFor(key))}
                 <span className="ml-0.5 text-[11px] text-slate-500">{meta.unit}</span>
@@ -119,7 +136,8 @@ export default function DetectionEnginePanel({ engine, activeWindow, comparison,
           </span>
           <span className="text-slate-600">·</span>
           <span>
-            confidence <span className="font-mono text-slate-300">{Math.round(w.confidence * 100)}%</span>
+            confidence index <span className="font-mono text-slate-300">{Math.round(w.confidence * 100)}%</span>{' '}
+            <span className="text-slate-500">(1 − e^(−R/2.5): a transform of R, not a probability)</span>
           </span>
         </div>
       </div>

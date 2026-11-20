@@ -11,11 +11,14 @@ npm install
 npm test
 ```
 
-Node 20 or newer. The agent and engine have **no runtime dependencies** and the
-test suite uses Node's built-in runner, so there is nothing else to install.
+Node 22.12 or newer — any Node line still in security support (22, 24 or 26;
+CI tests all three). Node 20 is end of life and no longer supported. The agent
+and engine have **no runtime dependencies** and the test suite uses Node's
+built-in runner, so there is nothing else to install.
 
 ```bash
-npm test                 # 169 unit and integration tests
+npm test                 # engine, agent, benchmark and dashboard tests
+npm --prefix backend/lambda/timelineHandler test   # Lambda handler (own lockfile; npm ci there first)
 npm run verify:engine    # reference cascade assertion
 npm run benchmark        # precision/recall against baseline detectors
 npm run agent:demo       # watch the agent detect a live synthetic cascade

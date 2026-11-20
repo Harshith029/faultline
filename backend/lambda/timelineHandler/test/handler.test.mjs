@@ -353,6 +353,45 @@ test('a window missing any metric is reported as a gap, never zero-filled', asyn
   assert.ok(body.raw.every((w) => w.p99_latency !== 0 || w.error_rate !== 0 || w.client_error_rate !== 0))
 })
 
+test('live windows keep their minute position, so a missing minute shows as a jump', async () => {
+  // Minute -2 has no datapoints. Renumbering the remaining rows 1, 2 would make
+  // minutes -3 and -1 look adjacent, and a "sustained" run could span the hole.
+  const points = [
+    { t: minuteBefore(3), latency: 120, client: 0.02, server: 0.01 },
+    { t: minuteBefore(1), latency: 130, client: 0.03, server: 0.02 },
+  ]
+  const cloudwatch = fakeClient([cwResult(points)])
+  const handler = createHandler({ cloudwatch, env: {}, now: () => NOW, log: () => {} })
+
+  const body = parse(await handler({ queryStringParameters: { source: 'live' } }))
+
+  assert.deepEqual(
+    body.raw.map((w) => w.window_number),
+    [58, 60]
+  )
+  assert.equal(body.window_seconds, 60, 'the response states its spacing so a client can check adjacency')
+})
+
+const headersOf = async (env, event) => {
+  const cloudwatch = fakeClient([cwResult([{ t: minuteBefore(1), latency: 1, client: 0, server: 0 }])])
+  const res = await createHandler({ cloudwatch, env, now: () => NOW, log: () => {} })(event)
+  return res.headers
+}
+
+test('the CORS origin on responses follows the configured origin, not a hard-coded wildcard', async () => {
+  const live = { queryStringParameters: { source: 'live' } }
+  assert.equal((await headersOf({ CORS_ALLOW_ORIGIN: 'https://app.example.com' }, live))['Access-Control-Allow-Origin'], 'https://app.example.com')
+  // SAM's Cors setting needs the value quoted; the same string may be passed through.
+  assert.equal((await headersOf({ CORS_ALLOW_ORIGIN: "'https://app.example.com'" }, live))['Access-Control-Allow-Origin'], 'https://app.example.com')
+  assert.equal((await headersOf({}, live))['Access-Control-Allow-Origin'], '*')
+
+  const invalid = await createHandler({ env: { CORS_ALLOW_ORIGIN: 'https://app.example.com' }, log: () => {} })({
+    queryStringParameters: {},
+  })
+  assert.equal(invalid.statusCode, 400)
+  assert.equal(invalid.headers['Access-Control-Allow-Origin'], 'https://app.example.com', 'errors carry it too')
+})
+
 test('non-finite CloudWatch values are treated as missing, not as zero', async () => {
   const cloudwatch = fakeClient([
     {

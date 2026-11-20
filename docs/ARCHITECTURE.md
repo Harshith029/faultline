@@ -122,6 +122,19 @@ ever measured. `/health` reports `degraded` once no valid telemetry has arrived
 for `detector.noDataGraceSeconds` (default 300), so a silent exporter failure
 looks like a failure rather than a quiet night.
 
+**Adjacent means adjacent in time.** `minSustain` counts consecutive windows,
+so the engine restarts a run wherever `window_number` skips or, when the
+sampling interval is known, wherever timestamps are further apart than
+`maxGapSeconds`. The agent drops replayed and out-of-order samples before they
+reach the buffer, and the live Lambda path numbers windows by their minute, so
+a missing minute shows as a jump. Elevated at minute 5 and at minute 7 is not
+two consecutive windows.
+
+**Liveness is not readiness.** `/livez` answers whether the process and its
+collection loop are alive; `/health` answers whether the telemetry is
+trustworthy. Restarting cannot fix a missing exporter, so only the first
+belongs in a liveness probe.
+
 **One incident per cascade.** Alerting per window is how monitoring gets muted.
 The state machine plus cooldown is as much of the product as the math.
 

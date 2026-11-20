@@ -76,12 +76,13 @@ export function createSyntheticSource(options = {}, ctx = {}) {
     },
 
     async collect() {
-      const timestamp = new Date().toISOString()
+      // No timestamp: like any source that only knows when it was asked, the
+      // samples are stamped by the detector on receipt.
       const samples = services.map((service) => {
         const factor = intensity(incidents.get(service.name), tick)
         const elapsed = tick - (incidents.get(service.name)?.startTick ?? 0)
 
-        const sample = { service: service.name, timestamp }
+        const sample = { service: service.name }
         for (const metric of ['p99_latency', 'retry_rate', 'error_rate']) {
           const jitter = (random() - 0.5) * 2 * noise[metric]
           const { delay, gain } = ramp[metric]

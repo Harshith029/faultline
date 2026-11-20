@@ -1,4 +1,6 @@
-export default function TimelineScrubber({ activeWindow, onChange, windows }) {
+import { anyElevated } from '../lib/signals'
+
+export default function TimelineScrubber({ activeWindow, onChange, windows, params, showScenarioLegend = false }) {
   const getPhaseConfig = (windowData) => {
     if (windowData?.triggered || windowData?.outage) {
       return {
@@ -9,8 +11,10 @@ export default function TimelineScrubber({ activeWindow, onChange, windows }) {
       }
     }
 
-    const anyElevated = windowData && Object.values(windowData.metrics ?? {}).some((z) => z >= 2)
-    if ((windowData?.signal_count ?? 0) > 0 || anyElevated) {
+    // The engine's notion of elevated, so a falling metric counts when it should
+    // and a per-metric threshold is respected.
+    const elevated = windowData ? anyElevated(windowData, params) : false
+    if ((windowData?.signal_count ?? 0) > 0 || elevated) {
       return {
         label: 'Instability forming',
         detail: 'Signal convergence rising',
@@ -137,7 +141,12 @@ export default function TimelineScrubber({ activeWindow, onChange, windows }) {
             const showLabel = !dense || isActive || window.window_number % 5 === 0
 
             return (
-              <div key={window.window_number} className="flex min-w-0 flex-1 flex-col items-center gap-2">
+              <div
+                key={window.window_number}
+                title={window.gap_before ? 'Telemetry is missing just before this window; sustained runs restart here' : undefined}
+                className="relative flex min-w-0 flex-1 flex-col items-center gap-2"
+              >
+                {window.gap_before && <span className="absolute left-0 top-0 h-3 w-px bg-amber-400/80" />}
                 <div
                   className={`rounded-full transition-all duration-300 ${dense ? 'h-2 w-2' : 'h-3 w-3'} ${isActive ? 'scale-125' : ''}`}
                   style={{
@@ -157,7 +166,7 @@ export default function TimelineScrubber({ activeWindow, onChange, windows }) {
         </div>
       </div>
 
-      {windows.length === 12 && (
+      {showScenarioLegend && windows.length === 12 && (
         <div className="flex flex-wrap gap-3 text-xs">
           {[
             { label: 'Nominal W1-W4', color: '#38BDF8' },

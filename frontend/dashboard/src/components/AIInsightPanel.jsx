@@ -247,14 +247,14 @@ export default function AIInsightPanel({ activeWindow, activeWindowData }) {
           <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
             <div className="dashboard-card-muted min-w-0 rounded-2xl border border-white/8 p-4">
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500">
-                Confidence
+                Confidence index
               </div>
               <div className="mt-3 min-w-0">
                 <div className="text-[clamp(1.75rem,3vw,2.25rem)] font-semibold leading-none text-white">
                   {confidence}%
                 </div>
                 <div className="mt-2 text-xs leading-5 text-slate-500">
-                  belief strength
+                  from R; not a probability
                 </div>
               </div>
               <div className="mt-3 h-2 rounded-full bg-slate-900/80">

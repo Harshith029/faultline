@@ -3,9 +3,8 @@ import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedroc
 import { CloudWatchClient, GetMetricDataCommand } from '@aws-sdk/client-cloudwatch'
 import { unmarshall } from '@aws-sdk/util-dynamodb'
 
-const JSON_HEADERS = { 'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json' }
-
 const LIVE_WINDOW_MINUTES = 60
+const LIVE_WINDOW_SECONDS = 60
 // A single Query page is capped at 1 MB, so a long timeline arrives in pieces.
 // Without following LastEvaluatedKey the tail is silently dropped, which looks
 // exactly like an incident that never happened.
@@ -13,9 +12,28 @@ const MAX_QUERY_PAGES = 20
 
 const round2 = (x) => Math.round(x * 100) / 100
 
-const json = (statusCode, body) => ({
+/**
+ * The Access-Control-Allow-Origin this API answers with.
+ *
+ * API Gateway's CORS setting only answers the OPTIONS preflight; the browser
+ * checks this header on the actual response, so the two have to agree, and
+ * template.yaml passes the same CorsAllowOrigin to both. SAM wants that value
+ * quoted ("'https://app.example.com'"), so surrounding quotes are stripped.
+ *
+ * CORS only decides which web pages may *read* a response. It is not access
+ * control; that is ApiAuthMode's job.
+ */
+export const corsOriginFrom = (env) => {
+  const value = String(env?.CORS_ALLOW_ORIGIN ?? '')
+    .trim()
+    .replace(/^'+|'+$/g, '')
+    .trim()
+  return value || '*'
+}
+
+const responder = (origin) => (statusCode, body) => ({
   statusCode,
-  headers: JSON_HEADERS,
+  headers: { 'Access-Control-Allow-Origin': origin, 'Content-Type': 'application/json' },
   body: JSON.stringify(body),
 })
 
@@ -31,7 +49,7 @@ const json = (statusCode, body) => ({
  * substituting zero would manufacture an observation — a latency of "0 ms" that
  * the detector would happily fold into its baseline.
  */
-const liveTelemetry = async ({ cloudwatch, GetMetricData, env, now }) => {
+const liveTelemetry = async ({ cloudwatch, GetMetricData, env, now, json = responder(corsOriginFrom(env)) }) => {
   const apiName = env.LIVE_API_NAME || 'Faultline-API'
   const end = new Date(Math.floor(now() / 60000) * 60000)
   const start = new Date(end.getTime() - LIVE_WINDOW_MINUTES * 60000)
@@ -41,7 +59,7 @@ const liveTelemetry = async ({ cloudwatch, GetMetricData, env, now }) => {
     Id: id,
     MetricStat: {
       Metric: { Namespace: 'AWS/ApiGateway', MetricName: metricName, Dimensions: dimensions },
-      Period: 60,
+      Period: LIVE_WINDOW_SECONDS,
       Stat: stat,
     },
   })
@@ -89,7 +107,11 @@ const liveTelemetry = async ({ cloudwatch, GetMetricData, env, now }) => {
     }
 
     raw.push({
-      window_number: raw.length + 1,
+      // The minute's position in the hour, not its position among complete
+      // rows. Renumbering the complete rows 1, 2, 3… made minutes either side
+      // of a hole look adjacent, so a "sustained" run could span missing data.
+      // A missing minute now stays visible as a jump in window_number.
+      window_number: i + 1,
       window_timestamp: new Date(t).toISOString(),
       p99_latency: round2(latency),
       client_error_rate: round2(clientErrors * 100),
@@ -101,6 +123,9 @@ const liveTelemetry = async ({ cloudwatch, GetMetricData, env, now }) => {
     service_id: 'live',
     source: 'cloudwatch',
     api_name: apiName,
+    // Expected spacing between windows. A client running the engine passes it
+    // as windowSeconds, so adjacency is checked against real time as well.
+    window_seconds: LIVE_WINDOW_SECONDS,
     metrics: ['p99_latency', 'client_error_rate', 'error_rate'],
     metric_mapping: {
       p99_latency: 'API Gateway p99 latency (ms)',
@@ -307,6 +332,7 @@ export function createHandler({
   const Query = commands.QueryCommand ?? QueryCommand
   const InvokeModel = commands.InvokeModelCommand ?? InvokeModelCommand
   const GetMetricData = commands.GetMetricDataCommand ?? GetMetricDataCommand
+  const json = responder(corsOriginFrom(env))
 
   // The timeline for a service is precomputed and does not change between
   // requests, so neither does its explanation. Without a cache every page view
@@ -336,7 +362,7 @@ export function createHandler({
 
     if (params.source === 'live') {
       try {
-        return await liveTelemetry({ cloudwatch, GetMetricData, env, now })
+        return await liveTelemetry({ cloudwatch, GetMetricData, env, now, json })
       } catch (err) {
         log({ event: 'LIVE_TELEMETRY_ERROR', message: err.message })
         return json(502, { error: 'live telemetry unavailable' })

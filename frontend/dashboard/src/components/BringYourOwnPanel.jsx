@@ -4,29 +4,53 @@ import { parseTelemetryCsv, EXAMPLE_CSV } from '@faultline/core'
 import DriftChart from './DriftChart'
 import RiskTimelineChart from './RiskTimelineChart'
 
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
 export default function BringYourOwnPanel() {
   const [text, setText] = useState('')
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [activeWindow, setActiveWindow] = useState(1)
+  const [skipped, setSkipped] = useState([])
 
   const run = (csv) => {
-    const { raw, error: parseError } = parseTelemetryCsv(csv)
+    const { raw, error: parseError, skipped: skippedRows = [] } = parseTelemetryCsv(csv)
+    setSkipped(skippedRows)
     if (parseError) {
       setError(parseError)
       setResult(null)
       return
     }
-    const detection = runDetection(raw)
+    let detection
+    try {
+      detection = runDetection(raw)
+    } catch (err) {
+      // The parser should never hand the engine a window it rejects; if it
+      // does, say so rather than leave the previous result on screen.
+      setError(`Could not score this telemetry: ${err.message}`)
+      setResult(null)
+      return
+    }
     const comparison = compareDetectors(detection)
     setResult({ raw, detection, comparison })
     setError(null)
-    setActiveWindow(detection.detectionWindow?.window_number ?? raw.length)
+    // Window numbers can skip where a row was dropped, so fall back to the last
+    // window's own number rather than to the row count.
+    setActiveWindow(detection.detectionWindow?.window_number ?? raw[raw.length - 1].window_number)
   }
 
   const onFile = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
+    // Analysis runs in this tab; a huge file would freeze it before the
+    // parser's own limit could refuse it.
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError('That file is larger than 5 MB. Trim it to the window you want to examine.')
+      setResult(null)
+      setSkipped([])
+      e.target.value = ''
+      return
+    }
     const reader = new FileReader()
     reader.onload = () => {
       const content = String(reader.result)
@@ -62,6 +86,8 @@ export default function BringYourOwnPanel() {
           <div className="mt-2 max-w-2xl text-sm text-slate-400">
             Paste a CSV (or upload a file) with <span className="font-mono text-slate-300">p99_latency, retry_rate, error_rate</span> columns.
             The same deterministic detector runs on it in your browser — no server, no precomputed answers.
+            Cells must be plain numbers (quoted fields are fine). A row with a missing or malformed value is
+            skipped and listed, never read as zero.
           </div>
         </div>
         {verdict && (
@@ -101,7 +127,7 @@ export default function BringYourOwnPanel() {
           </label>
           {(text || result) && (
             <button
-              onClick={() => { setText(''); setResult(null); setError(null) }}
+              onClick={() => { setText(''); setResult(null); setError(null); setSkipped([]) }}
               className="rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-medium text-slate-400 transition hover:text-white"
             >
               Clear
@@ -111,6 +137,21 @@ export default function BringYourOwnPanel() {
         {error && (
           <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
             {error}
+          </div>
+        )}
+        {skipped.length > 0 && (
+          <div className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            <div className="font-medium">
+              Skipped {skipped.length} row{skipped.length === 1 ? '' : 's'}:
+            </div>
+            <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-amber-200/90">
+              {skipped.slice(0, 5).map((row) => (
+                <li key={row.line}>
+                  line {row.line}: {row.reason}
+                </li>
+              ))}
+              {skipped.length > 5 && <li>…and {skipped.length - 5} more</li>}
+            </ul>
           </div>
         )}
       </div>

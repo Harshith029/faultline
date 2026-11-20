@@ -94,13 +94,29 @@ test('the agent recovers to healthy once valid telemetry returns', async () => {
   empty = false
   await agent.tick()
 
-  const health = agent.health()
+  // Evaluated at the instant the data arrived. Whether the assertion happens to
+  // run a millisecond later must not decide the outcome.
+  const health = agent.health(agent.lastDataAtMs)
   assert.equal(health.status, 'ok')
   assert.deepEqual(health.reasons, [])
   assert.equal(agent.snapshot().consecutiveEmptyCollections, 0)
   assert.ok(health.lastDataAt !== null)
 
   await agent.stop()
+})
+
+test('staleness is counted in whole seconds, so a probe landing a few milliseconds late cannot flip health', async () => {
+  const agent = await agentWith(async () => [], { detector: { noDataGraceSeconds: 0 } })
+  const dataAt = Date.UTC(2026, 10, 1, 12, 0, 0)
+  agent.running = true
+  agent.startedAtMs = dataAt - 60_000
+  agent.lastDataAtMs = dataAt
+
+  // Grace 0 means "data from this second": still fresh 999 ms later, stale once
+  // a whole second has passed. Previously any millisecond of delay degraded it.
+  assert.equal(agent.health(dataAt + 999).status, 'ok')
+  assert.deepEqual(agent.health(dataAt + 1000).reasons, ['telemetry_stale'])
+  assert.equal(agent.health(dataAt + 1000).secondsSinceData, 1)
 })
 
 test('health degrades when one previously healthy service becomes stale', async () => {

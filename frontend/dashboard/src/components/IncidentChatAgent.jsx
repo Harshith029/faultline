@@ -180,7 +180,7 @@ export default function IncidentChatAgent({ activeWindow, activeWindowData, hypo
   const quickFacts = [
     { label: 'W', value: String(activeWindow) },
     { label: 'R', value: activeWindowData?.R_score?.toFixed(2) ?? '--' },
-    { label: 'Conf', value: `${confidence}%` },
+    { label: 'Index', value: `${confidence}%` },
     { label: 'Signals', value: String(signalCount) },
   ]
 

@@ -21,6 +21,16 @@ export const DEFAULT_CONFIG = {
     // degraded. Defaults to five collection intervals, so a single missed
     // scrape is tolerated but a silent exporter failure is not.
     noDataGraceSeconds: 300,
+    // Largest spacing between two samples that still counts as adjacent. null
+    // means 1.5 × each service's observed spacing (the median gap between its
+    // samples, never less than intervalSeconds): a late sample is tolerated, a
+    // missing one breaks a sustained run. Set it to tolerate more.
+    maxSampleGapSeconds: null,
+    // Stop tracking a service that has sent nothing at all for this long. null
+    // (the default) never retires automatically: a vanished service keeps
+    // /health degraded until it returns or is retired via the API. A service
+    // with an open incident is never retired automatically.
+    retireAfterSeconds: null,
     // Any set of numeric metrics your source emits. The engine is agnostic;
     // these three are simply the defaults the reference scenario uses.
     metrics: ['p99_latency', 'retry_rate', 'error_rate'],
@@ -123,6 +133,28 @@ export function validateConfig(config) {
     if (rule.integer && !Number.isInteger(value)) errors.push(`${path} must be an integer (got ${value})`)
     if (rule.min !== undefined && value < rule.min) errors.push(`${path} must be >= ${rule.min} (got ${value})`)
     if (rule.max !== undefined && value > rule.max) errors.push(`${path} must be <= ${rule.max} (got ${value})`)
+  }
+
+  const { intervalSeconds, noDataGraceSeconds, maxSampleGapSeconds, retireAfterSeconds } = config.detector ?? {}
+  if (maxSampleGapSeconds != null) {
+    if (typeof maxSampleGapSeconds !== 'number' || !Number.isFinite(maxSampleGapSeconds)) {
+      errors.push('detector.maxSampleGapSeconds must be a finite number of seconds, or null')
+    } else if (Number.isFinite(intervalSeconds) && maxSampleGapSeconds <= intervalSeconds) {
+      errors.push(
+        `detector.maxSampleGapSeconds (${maxSampleGapSeconds}) must be greater than detector.intervalSeconds ` +
+          `(${intervalSeconds}); otherwise every sample is a gap and no signal can ever be sustained`
+      )
+    }
+  }
+  if (retireAfterSeconds != null) {
+    if (typeof retireAfterSeconds !== 'number' || !Number.isFinite(retireAfterSeconds)) {
+      errors.push('detector.retireAfterSeconds must be a finite number of seconds, or null')
+    } else if (Number.isFinite(noDataGraceSeconds) && retireAfterSeconds <= noDataGraceSeconds) {
+      errors.push(
+        `detector.retireAfterSeconds (${retireAfterSeconds}) must be greater than detector.noDataGraceSeconds ` +
+          `(${noDataGraceSeconds}), so a vanished service is reported stale before it is retired`
+      )
+    }
   }
 
   const { historyWindows, baselineWindows, minSustain } = config.detector ?? {}

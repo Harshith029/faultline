@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useMemo } from 'react'
 import { fetchTimeline, fetchLiveTelemetry } from '../timelineApi'
 import { runDetection, compareDetectors, DEFAULT_PARAMS } from '@faultline/core'
 import { RAW_TELEMETRY } from '@faultline/core'
-import { liveParamsFor } from '../lib/liveTelemetry'
+import { liveParamsFor, toPositionalWindows } from '../lib/liveTelemetry'
 import MetadataBar from './MetadataBar'
 import TimelineScrubber from './TimelineScrubber'
 import DetectionEnginePanel from './DetectionEnginePanel'
@@ -41,6 +41,15 @@ const SAMPLE_HYPOTHESIS = {
   ],
 }
 
+// Said only when minutes are missing: the engine never lets a sustained run span
+// one, and a reader should know why a run restarted.
+const liveQualityNote = (quality) => {
+  const complete = quality?.windows_complete
+  const requested = quality?.windows_requested
+  if (!Number.isFinite(complete) || !Number.isFinite(requested) || complete >= requested) return ''
+  return ` ${complete} of ${requested} minutes had complete data; a sustained signal never spans a missing minute.`
+}
+
 export default function FaultlineDashboard() {
   const [mode, setMode] = useState('scenario')
   const [activeWindow, setActiveWindow] = useState(1)
@@ -49,6 +58,8 @@ export default function FaultlineDashboard() {
   const [liveParams, setLiveParams] = useState(null)
   const [liveLoading, setLiveLoading] = useState(false)
   const [liveError, setLiveError] = useState(null)
+  const [liveQuality, setLiveQuality] = useState(null)
+  const [explanation, setExplanation] = useState({ status: 'idle', error: null })
 
   const liveAvailable = Boolean(import.meta.env.VITE_API_URL)
   const isLive = mode === 'live' && Array.isArray(liveRaw) && liveRaw.length > 0 && liveParams !== null
@@ -61,15 +72,21 @@ export default function FaultlineDashboard() {
   const comparison = useMemo(() => compareDetectors(engine), [engine])
   const windows = engine.windows
 
-  useEffect(() => {
+  // Fetched only when asked. Loading the page used to request the timeline by
+  // itself, and against an API with Bedrock enabled that could mean a billed
+  // model call for every visitor who merely opened the dashboard.
+  const loadApiExplanation = () => {
+    setExplanation({ status: 'loading', error: null })
     fetchTimeline('B')
       .then((data) => {
         const triggered = data?.windows?.find((w) => w.triggered)
         const hypothesis = triggered?.hypothesis ?? triggered?.hypothesis_fallback
-        if (hypothesis) setApiHypothesis(hypothesis)
+        if (!hypothesis) throw new Error('the API returned no explanation for this timeline')
+        setApiHypothesis(hypothesis)
+        setExplanation({ status: 'loaded', error: null })
       })
-      .catch(() => {})
-  }, [])
+      .catch((err) => setExplanation({ status: 'error', error: err.message }))
+  }
 
   const loadLive = () => {
     setLiveLoading(true)
@@ -80,13 +97,15 @@ export default function FaultlineDashboard() {
           throw new Error('no live telemetry returned')
         }
         const params = liveParamsFor(data)
+        const rows = toPositionalWindows(data.raw)
         // Fails here, with a readable message, if the rows do not carry every
         // metric the response declared — instead of crashing the render.
-        runDetection(data.raw, params)
-        setLiveRaw(data.raw)
+        runDetection(rows, params)
+        setLiveRaw(rows)
         setLiveParams(params)
+        setLiveQuality(data.data_quality ?? null)
         setMode('live')
-        setActiveWindow(data.raw.length)
+        setActiveWindow(rows.length)
       })
       .catch((err) => setLiveError(err.message))
       .finally(() => setLiveLoading(false))
@@ -125,6 +144,8 @@ export default function FaultlineDashboard() {
         outage={activeWindowData.outage}
         timestamp={activeWindowData.window_timestamp}
         totalWindows={windows.length}
+        source={isLive ? 'live' : 'scenario'}
+        signalCount={activeWindowData.signal_count}
       />
 
       <main className="relative z-10 mx-auto flex w-full max-w-7xl flex-col gap-7 px-4 py-8 sm:px-6 lg:gap-8 lg:px-8 lg:py-10">
@@ -137,8 +158,8 @@ export default function FaultlineDashboard() {
                 </div>
                 <div className="mt-2 text-sm text-slate-400">
                   {isLive
-                    ? 'Real CloudWatch telemetry from the configured API Gateway, one-minute windows over the last hour: p99 latency, the 4XX client-error rate (all client-side errors — not a retry count) and the 5XX error rate. Detection runs live in your browser.'
-                    : 'Curated 12-window cascade scenario. Switch to live mode to run the same engine on real production telemetry.'}
+                    ? `Real CloudWatch telemetry from the configured API Gateway, one-minute windows over the last hour: p99 latency, the 4XX client-error rate (all client-side errors — not a retry count) and the 5XX error rate. Detection runs live in your browser.${liveQualityNote(liveQuality)}`
+                    : 'Curated 12-window cascade scenario: sample data, not your telemetry. Switch to live mode to run the same engine on real API Gateway metrics.'}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -171,6 +192,31 @@ export default function FaultlineDashboard() {
                 Live telemetry unavailable: {liveError}
               </div>
             )}
+            {!isLive && (
+              <div className="mt-4 flex flex-col gap-3 border-t border-white/8 pt-4 text-sm text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  {explanation.status === 'loaded'
+                    ? 'Showing the explanation the timeline API holds for this scenario.'
+                    : 'The scenario’s explanation is sample text. The timeline API can supply its own; if it has Bedrock enabled that may be a billed model call, so it is fetched only when you ask.'}
+                </span>
+                <button
+                  onClick={loadApiExplanation}
+                  disabled={explanation.status === 'loading'}
+                  className="shrink-0 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-medium text-slate-300 transition hover:text-white disabled:cursor-wait disabled:opacity-60"
+                >
+                  {explanation.status === 'loading'
+                    ? 'Loading explanation…'
+                    : explanation.status === 'loaded'
+                      ? 'Reload API explanation'
+                      : 'Load API explanation'}
+                </button>
+              </div>
+            )}
+            {explanation.status === 'error' && (
+              <div className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                Explanation unavailable: {explanation.error}
+              </div>
+            )}
           </section>
         )}
 
@@ -179,6 +225,8 @@ export default function FaultlineDashboard() {
             activeWindow={activeWindow}
             onChange={(value) => setActiveWindow(Number(value))}
             windows={windows}
+            params={engine.params}
+            showScenarioLegend={!isLive}
           />
         </section>
 
@@ -187,6 +235,7 @@ export default function FaultlineDashboard() {
             windows={windows}
             activeWindow={activeWindow}
             metrics={scoredMetrics}
+            threshold={engine.params.zThreshold}
           />
         </section>
 
@@ -271,6 +320,7 @@ export default function FaultlineDashboard() {
               windows={windows}
               activeWindow={activeWindow}
               metrics={scoredMetrics}
+              params={engine.params}
             />
           </div>
         </section>

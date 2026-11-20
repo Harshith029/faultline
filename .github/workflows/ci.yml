@@ -7,12 +7,19 @@ on:
 
 jobs:
   verify:
+    name: verify (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every Node line still receiving security fixes. Node 20 reached end of
+        # life in April 2026 and is no longer tested or supported.
+        node-version: [22, 24, 26]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
       - name: Lint and static checks
@@ -34,10 +41,12 @@ jobs:
       run:
         working-directory: backend/lambda/timelineHandler
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          # Matches the function runtime in template.yaml (nodejs22.x), so the
+          # tests exercise the Node line the handler actually runs on.
+          node-version: 22
       # The Lambda is outside the root workspaces and has its own lockfile, so
       # it must be installed and tested independently. Nothing here may rely on
       # the root install.
@@ -50,7 +59,7 @@ jobs:
       - name: Build deployment artifact
         run: npm run package
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: faultline-timeline-handler
           path: backend/lambda/timelineHandler/dist/function.zip
@@ -68,10 +77,10 @@ jobs:
   security-defaults:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       # These are asserted by unit tests too; this job makes the failure mode
@@ -100,10 +109,10 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
       # Audits every independent lockfile, not just the root one. A
       # vulnerability in the Lambda tree is invisible to a root-only audit.
       #
@@ -118,10 +127,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
       - run: npm ci
       # The dataset belongs to the OmniAnomaly authors and is deliberately not
@@ -139,7 +148,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build agent image
         run: docker build -t faultline/agent:ci .
       - name: Container refuses to start unauthenticated

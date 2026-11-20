@@ -40,10 +40,13 @@ export function createHttpSource(options = {}, ctx = {}) {
         throw new Error('telemetry endpoint must return an array or { samples: [...] }')
       }
 
-      const timestamp = new Date().toISOString()
       const samples = rows
         .map((row) => {
-          const sample = { service: row[mapping.service], timestamp: row.timestamp ?? timestamp }
+          // A row's own timestamp is when the endpoint observed it, and is kept:
+          // it is what lets the detector recognise a replayed row. A row without
+          // one is stamped by the detector on receipt.
+          const sample = { service: row[mapping.service] }
+          if (row.timestamp !== undefined && row.timestamp !== null) sample.timestamp = row.timestamp
           for (const metric of metrics) {
             const value = row[mapping[metric]]
             // Absent or unparseable stays absent. The detector rejects the whole

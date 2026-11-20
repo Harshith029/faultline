@@ -59,8 +59,9 @@ export function createPrometheusSource(options = {}, ctx = {}) {
       // the series was last scraped, so it says nothing about freshness. A
       // series whose target stopped reporting drops out of the result after
       // Prometheus's lookback window (5 minutes by default) and the service
-      // then goes stale here, so the receipt time is the honest stamp.
-      const timestamp = new Date().toISOString()
+      // then goes stale here. Samples therefore carry no timestamp: the
+      // detector stamps them on receipt, and knows a receipt-stamped sample is
+      // a new observation by definition rather than a possible replay.
       const byService = new Map()
 
       for (const [metric, promql] of Object.entries(queries)) {
@@ -75,7 +76,7 @@ export function createPrometheusSource(options = {}, ctx = {}) {
         for (const series of result) {
           const service = series.metric?.[serviceLabel]
           if (!service) continue
-          if (!byService.has(service)) byService.set(service, { service, timestamp })
+          if (!byService.has(service)) byService.set(service, { service })
           const value = Number(series.value?.[1])
           // A NaN sample (Prometheus emits these for empty rate windows) leaves
           // the metric absent. The detector then rejects the sample rather than

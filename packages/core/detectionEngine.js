@@ -14,6 +14,12 @@ export const DEFAULT_PARAMS = {
   // Which way is bad, per metric: 'up' (default), 'down' (throughput, cache
   // hit rate — a fall is the failure) or 'both'.
   direction: null,
+  // Expected seconds between windows. When set, windows whose timestamps are
+  // further apart than `maxGapSeconds` (default 1.5 × windowSeconds) are not
+  // adjacent, so a sustained run cannot continue across the hole. null leaves
+  // adjacency to `window_number` alone.
+  windowSeconds: null,
+  maxGapSeconds: null,
 }
 
 const METRIC_KEYS = DEFAULT_PARAMS.metrics
@@ -64,11 +70,58 @@ function valueOf(window, metric, index) {
 
 const seriesOf = (raw, metric) => raw.map((w, i) => valueOf(w, metric, i))
 
-const directionFor = (metric, params) => params.direction?.[metric] ?? 'up'
+/** The direction in which a metric moving counts as a problem: 'up', 'down' or 'both'. */
+export const metricDirection = (metric, params = DEFAULT_PARAMS) => params.direction?.[metric] ?? 'up'
 
-// Turns a signed z-score into "evidence of a problem" for the metric's bad
-// direction, so qualification and scoring stay one-sided arithmetic.
-const orient = (z, direction) => (direction === 'down' ? -z : direction === 'both' ? Math.abs(z) : z)
+/**
+ * Turns a signed z-score into "evidence of a problem" for the metric's bad
+ * direction, so qualification and scoring stay one-sided arithmetic. A display
+ * that compares raw z against a threshold misreads every 'down' metric; it has
+ * to compare this instead.
+ */
+export const orientZ = (z, direction) => (direction === 'down' ? -z : direction === 'both' ? Math.abs(z) : z)
+
+const directionFor = metricDirection
+const orient = orientZ
+
+const toNumber = (value) => (value === null || value === undefined || value === '' ? Number.NaN : Number(value))
+
+/**
+ * For each window, whether it is NOT adjacent to the one before it.
+ *
+ * "Sustained for minSustain windows" is a statement about consecutive moments
+ * in time, not consecutive array entries. If a minute of telemetry is missing,
+ * the windows either side of the hole are two minutes apart, and counting them
+ * as a two-window run would let minSustain be satisfied by evidence that never
+ * existed. A window starts a new run when:
+ *   - its window_number does not advance by exactly one (a slot is missing,
+ *     repeated, or out of order), or
+ *   - windowSeconds is known and its timestamp is more than maxGapSeconds
+ *     (default 1.5 × windowSeconds) after the previous window's.
+ * Windows that carry neither field keep the original positional behaviour.
+ */
+export function adjacencyBreaks(raw, params = DEFAULT_PARAMS) {
+  const windowSeconds = toNumber(params?.windowSeconds)
+  const explicitGap = toNumber(params?.maxGapSeconds)
+  const maxGapMs =
+    windowSeconds > 0 ? (explicitGap > 0 ? explicitGap : windowSeconds * 1.5) * 1000 : null
+
+  return raw.map((window, i) => {
+    if (i === 0) return false
+    const previous = raw[i - 1]
+
+    const n = toNumber(window?.window_number)
+    const p = toNumber(previous?.window_number)
+    if (Number.isFinite(n) && Number.isFinite(p) && n - p !== 1) return true
+
+    if (maxGapMs !== null) {
+      const t = Date.parse(window?.window_timestamp)
+      const pt = Date.parse(previous?.window_timestamp)
+      if (Number.isFinite(t) && Number.isFinite(pt) && t - pt > maxGapMs) return true
+    }
+    return false
+  })
+}
 
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length
 
@@ -117,9 +170,11 @@ export function zScore(value, baseline) {
   return (value - baseline.mean) / baseline.sigma
 }
 
-function qualifyMetric(zSeries, params, threshold = params.zThreshold) {
+function qualifyMetric(zSeries, params, threshold = params.zThreshold, breaks = []) {
   let run = 0
-  return zSeries.map((z) => {
+  return zSeries.map((z, i) => {
+    // A run never continues across a hole in the telemetry.
+    if (breaks[i]) run = 0
     if (z >= threshold) run += 1
     else run = 0
     return { z, sustained: run, qualified: run >= params.minSustain }
@@ -133,8 +188,10 @@ function qualifyMetric(zSeries, params, threshold = params.zThreshold) {
  * than a rock-steady one, instead of holding every channel to a single global
  * number. Falls back to `zThreshold` for anything unlisted.
  */
-const thresholdFor = (metric, params) =>
+export const metricThreshold = (metric, params = DEFAULT_PARAMS) =>
   params.zThresholdPerMetric?.[metric] ?? params.zThreshold
+
+const thresholdFor = metricThreshold
 
 export function riskScore(qualifiedZ, params) {
   if (qualifiedZ.length === 0) return 0
@@ -142,6 +199,13 @@ export function riskScore(qualifiedZ, params) {
   return meanZ * Math.log(1 + qualifiedZ.length) * params.criticalityWeight
 }
 
+/**
+ * A bounded, monotone transform of the risk score: 1 − e^(−R/2.5), capped at
+ * 0.99. It is NOT a calibrated probability — nothing has fitted it to labelled
+ * incidents — so it orders windows exactly as R does and should be read as an
+ * index, never as "the chance this is a real incident". The field keeps its
+ * historical name, `confidence`, for compatibility.
+ */
 export function confidenceFromRisk(R) {
   if (R <= 0) return 0
   return Math.min(0.99, Math.round((1 - Math.exp(-R / 2.5)) * 100) / 100)
@@ -153,6 +217,7 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
   const qualifiedSeries = {}
 
   const zSeries = {}
+  const breaks = adjacencyBreaks(raw, params)
 
   for (const key of metrics) {
     const values = seriesOf(raw, key)
@@ -164,7 +229,8 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
     qualifiedSeries[key] = qualifyMetric(
       zSeries[key].map((z) => orient(z, direction)),
       params,
-      thresholdFor(key, params)
+      thresholdFor(key, params),
+      breaks
     )
   }
 
@@ -199,6 +265,9 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
       service_id: w.service_id ?? 'B',
       window_number: w.window_number,
       window_timestamp: w.window_timestamp,
+      // Present only where telemetry is missing just before this window, so a
+      // chart can show the hole and a reader can see why a run restarted.
+      ...(breaks[i] ? { gap_before: true } : {}),
       raw: rawValues,
       metrics: zValues,
       qualified_signals,
