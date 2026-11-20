@@ -54,7 +54,7 @@ engine never counts a run across a hole:
 
 | Sample | What happens | Counted as |
 |---|---|---|
-| Same source timestamp as the newest buffered sample | Dropped: a replay of an observation already counted (CloudWatch re-returning its latest datapoint, an exporter repeating itself) | `duplicateSamples`, `faultline_samples_dropped_total{reason="duplicate"}` |
+| Same source timestamp as the newest buffered sample | Dropped: a replay of an observation already counted (CloudWatch returning the same newest complete period on the next poll, an exporter repeating itself) | `duplicateSamples`, `faultline_samples_dropped_total{reason="duplicate"}` |
 | Older than the newest buffered sample | Dropped: it would reorder history | `outOfOrderSamples`, `{reason="out_of_order"}` |
 | Stamped more than 5 minutes ahead of the agent's clock | Rejected as incomplete (`timestamp` missing): it cannot order the series | `incompleteSamples` |
 | More than `maxSampleGapSeconds` after the previous one | Accepted, but the hole is a break: a sustained run restarts after it | `sampleGaps`, `faultline_sample_gaps_total` |
@@ -71,8 +71,9 @@ one restarts the run, including a collection the agent itself skipped because
 the previous one overran.
 
 The duplicate and ordering rules apply only between two timestamps the
-*source* reported (an HTTP row's `timestamp`, a CloudWatch datapoint's time),
-and the kind is remembered with each buffered sample across restarts.
+*source* reported (an HTTP row's `timestamp`, the CloudWatch period a sample
+was built from), and the kind is remembered with each buffered sample across
+restarts.
 Prometheus and the synthetic source report none, so those samples are stamped
 with the start of their collection cycle — consecutive cycles are then exactly
 one interval apart however long collection took — and only the gap rules

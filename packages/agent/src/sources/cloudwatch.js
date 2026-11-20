@@ -159,9 +159,10 @@ export function createCloudWatchSource(options = {}, ctx = {}) {
       const { cw, GetMetricDataCommand } = await getClient()
       // The window is aligned to whole periods, as AWS recommends, so every
       // poll asks for the same period boundaries. A period read on two polls
-      // comes back under the same time both times, so the repeat is
-      // recognisable as one observation rather than two. EndTime is exclusive,
-      // so the period still in progress is never read half-filled.
+      // comes back under the same time both times, and the detector drops the
+      // second read as a duplicate instead of counting one period twice.
+      // EndTime is exclusive, so the period still in progress is never read
+      // half-filled.
       const periodMs = periodSeconds * 1000
       const end = new Date(Math.floor(Date.now() / periodMs) * periodMs)
       const start = new Date(end.getTime() - periodMs * WINDOW_PERIODS)

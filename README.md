@@ -233,6 +233,9 @@ the newest period in which every configured metric has a datapoint, stamped with
 that period's time. If no period in the window has them all, it sends what the
 newest period has and leaves the rest missing — never zero — so the detector
 rejects the sample as incomplete for any service that needs a missing metric.
+Polling more often than the period reads the same period again under the same
+time, and the detector drops the repeat as a duplicate rather than counting one
+period twice.
 
 Then run it, with secrets supplied by the environment — never committed:
 

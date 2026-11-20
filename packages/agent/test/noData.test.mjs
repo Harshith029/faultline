@@ -473,33 +473,71 @@ test('a CloudWatch datapoint with no usable value or time is left out, never rea
   assert.deepEqual(sample, { service: 'api', timestamp: minute(1).toISOString(), p99_latency: 250, error_rate: 2 })
 })
 
-test('a CloudWatch period read again on the next poll keeps its time and its values', async () => {
-  let results = [
-    { Id: 'm0_0', Timestamps: [minute(1), minute(0)], Values: [250, 240] },
-    { Id: 'm0_1', Timestamps: [minute(1), minute(0)], Values: [0.01, 0.02] },
-    { Id: 'm0_2', Timestamps: [minute(1), minute(0)], Values: [0.03, 0.04] },
-  ]
-  const source = createCloudWatchSource(
+// Two polls in which only latency has moved on: by the second, 10:02 latency is
+// published but the 10:02 error rates are not, so 10:01 is still the newest
+// complete period.
+const firstPoll = [
+  { Id: 'm0_0', Timestamps: [minute(1), minute(0)], Values: [250, 240] },
+  { Id: 'm0_1', Timestamps: [minute(1), minute(0)], Values: [0.01, 0.02] },
+  { Id: 'm0_2', Timestamps: [minute(1), minute(0)], Values: [0.03, 0.04] },
+]
+const laggingPoll = [
+  { Id: 'm0_0', Timestamps: [minute(2), minute(1)], Values: [900, 250] },
+  { Id: 'm0_1', Timestamps: [minute(1)], Values: [0.01] },
+  { Id: 'm0_2', Timestamps: [minute(1)], Values: [0.03] },
+]
+
+// A CloudWatch source whose successive collections see each response in turn.
+const cloudWatchPolls = (...responses) => {
+  let poll = 0
+  return createCloudWatchSource(
     {
       targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
-      client: { cw: { send: async () => ({ MetricDataResults: results }) }, GetMetricDataCommand: class {} },
+      client: {
+        cw: { send: async () => ({ MetricDataResults: responses[poll++] }) },
+        GetMetricDataCommand: class {},
+      },
     },
     { logger: silentLogger }
   )
-  const [first] = await source.collect()
+}
 
-  // Next poll: latency has published 10:02 and the error rates have not, so
-  // 10:01 is still the newest complete period.
-  results = [
-    { Id: 'm0_0', Timestamps: [minute(2), minute(1)], Values: [900, 250] },
-    { Id: 'm0_1', Timestamps: [minute(1)], Values: [0.01] },
-    { Id: 'm0_2', Timestamps: [minute(1)], Values: [0.03] },
-  ]
+test('a CloudWatch period read again on the next poll keeps its time and its values', async () => {
+  const source = cloudWatchPolls(firstPoll, laggingPoll)
+  const [first] = await source.collect()
   const [again] = await source.collect()
 
   // One period, one observation: the repeat is identical, not a 10:01 sample
   // carrying 10:02's latency.
   assert.deepEqual(again, first)
+})
+
+test('the detector drops a CloudWatch period read on two polls as a duplicate', async () => {
+  const source = cloudWatchPolls(firstPoll, laggingPoll)
+  const detector = new RollingDetector({
+    params: {
+      baselineWindows: 4,
+      minSustain: 2,
+      minSignals: 2,
+      zThreshold: 2,
+      triggerThreshold: 3,
+      criticalityWeight: 1,
+      sigmaFloorRatio: 0.1,
+      metrics: ['p99_latency', 'client_error_rate', 'error_rate'],
+    },
+    historyWindows: 20,
+    intervalSeconds: 60,
+    logger: silentLogger,
+  })
+  const nowMs = minute(3).getTime()
+
+  detector.ingest(await source.collect(), { nowMs })
+  detector.ingest(await source.collect(), { nowMs: nowMs + 15_000 })
+
+  // The second poll is the same 10:01 period, not a second observation.
+  // Buffering it would let one minute of data stand in for two windows.
+  assert.equal(detector.dataQuality(nowMs + 15_000).duplicateSamples, 1)
+  assert.equal(detector.buffer.size('api'), 1)
 })
 
 test('a metric the detector does not use cannot hold a CloudWatch sample back', async () => {
