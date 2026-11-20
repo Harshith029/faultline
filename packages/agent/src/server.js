@@ -1,36 +1,68 @@
 import { createServer } from 'node:http'
 import { createServer as createTlsServer } from 'node:https'
 import { readFileSync } from 'node:fs'
-import { createAuthenticator } from './auth.js'
+import { createAuthenticator, isLoopbackHost } from './auth.js'
 
-let corsOrigin = '*'
+const ALLOW_HEADERS = 'Content-Type, Authorization, X-API-Key'
 
 const json = (res, status, body) => {
   const payload = JSON.stringify(body, null, 2)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),
-    'Access-Control-Allow-Origin': corsOrigin,
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
     'Cache-Control': 'no-store',
   })
   res.end(payload)
 }
 
 const text = (res, status, body) => {
-  res.writeHead(status, {
-    'Content-Type': 'text/plain; version=0.0.4; charset=utf-8',
-    'Access-Control-Allow-Origin': corsOrigin,
-  })
+  res.writeHead(status, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' })
   res.end(body)
+}
+
+/**
+ * Which browser origins may read the API. `null` (the default) means none: the
+ * agent ships no browser client, so there is nothing to allow.
+ */
+export function createCorsPolicy(corsOrigin = null) {
+  const list = corsOrigin == null ? [] : Array.isArray(corsOrigin) ? corsOrigin : [corsOrigin]
+  const wildcard = list.includes('*')
+  return {
+    /** Value for Access-Control-Allow-Origin, or null to send none. */
+    allowOriginFor(origin) {
+      if (wildcard) return '*'
+      return origin && list.includes(origin) ? origin : null
+    },
+    /**
+     * A browser write must come from an origin named explicitly. A wildcard
+     * never authorises one: on a token-less loopback agent the browser is the
+     * only thing standing between a malicious page and a fleet-wide silence.
+     */
+    allowsWriteFrom(origin) {
+      return list.includes(origin)
+    },
+  }
+}
+
+// `Host: [::1]:8787` → `::1`, `Host: localhost:8787` → `localhost`.
+const hostnameOf = (hostHeader = '') => {
+  const value = String(hostHeader).trim()
+  if (value.startsWith('[')) return value.slice(1, value.indexOf(']'))
+  return value.split(':')[0]
 }
 
 // Routes that change state; everything else is a read.
 const WRITE_ROUTES = [
   (method, path) => method === 'POST' && path === '/api/silences',
   (method, path) => method === 'DELETE' && path.startsWith('/api/silences/'),
+  (method, path) => method === 'DELETE' && path.startsWith('/api/services/'),
   (method, path) => method === 'POST' && path === '/api/inject',
 ]
+
+// Orchestrator probes. Always anonymous and answerable on any Host header: a
+// kubelet or load balancer probes before any credential exists, addresses the
+// pod by IP, and the responses carry no telemetry.
+const PROBE_PATHS = new Set(['/health', '/livez'])
 
 const isWrite = (method, path) => WRITE_ROUTES.some((test) => test(method, path))
 
@@ -63,6 +95,9 @@ export function renderPrometheusMetrics(agent) {
     '# HELP faultline_up Whether the FAULTLINE agent is running.',
     '# TYPE faultline_up gauge',
     'faultline_up 1',
+    '# HELP faultline_live Whether the collection loop is making progress (the /livez check).',
+    '# TYPE faultline_live gauge',
+    `faultline_live ${snapshot.liveness.status === 'ok' ? 1 : 0}`,
     '# HELP faultline_ticks_total Collection cycles completed.',
     '# TYPE faultline_ticks_total counter',
     `faultline_ticks_total ${snapshot.ticks}`,
@@ -75,6 +110,26 @@ export function renderPrometheusMetrics(agent) {
     '# HELP faultline_incomplete_samples_total Samples dropped for missing metrics.',
     '# TYPE faultline_incomplete_samples_total counter',
     `faultline_incomplete_samples_total ${snapshot.dataQuality.incompleteSamples}`,
+    '# HELP faultline_services_rejected_total Samples refused because detector.maxServices was reached.',
+    '# TYPE faultline_services_rejected_total counter',
+    `faultline_services_rejected_total ${snapshot.dataQuality.servicesRejected}`,
+    '# HELP faultline_samples_dropped_total Valid samples not buffered because they could not extend the series.',
+    '# TYPE faultline_samples_dropped_total counter',
+    `faultline_samples_dropped_total{reason="duplicate"} ${snapshot.dataQuality.duplicateSamples}`,
+    `faultline_samples_dropped_total{reason="out_of_order"} ${snapshot.dataQuality.outOfOrderSamples}`,
+    '# HELP faultline_sample_gaps_total Accepted samples that arrived after a hole; sustained runs restart there.',
+    '# TYPE faultline_sample_gaps_total counter',
+    `faultline_sample_gaps_total ${snapshot.dataQuality.sampleGaps}`,
+    '# HELP faultline_history_resets_total Services whose history was discarded after a hole longer than the buffer.',
+    '# TYPE faultline_history_resets_total counter',
+    `faultline_history_resets_total ${snapshot.dataQuality.historyResets}`,
+    '# HELP faultline_evaluation_errors_total Per-service evaluations that failed and were skipped.',
+    '# TYPE faultline_evaluation_errors_total counter',
+    `faultline_evaluation_errors_total ${snapshot.dataQuality.evaluationErrors}`,
+    '# HELP faultline_services_retired_total Services removed from tracking. reason="silent" also removed a stale-telemetry alarm: alert on it.',
+    '# TYPE faultline_services_retired_total counter',
+    `faultline_services_retired_total{reason="operator"} ${snapshot.retiredServices.operator ?? 0}`,
+    `faultline_services_retired_total{reason="silent"} ${snapshot.retiredServices.silent ?? 0}`,
     '# HELP faultline_telemetry_healthy Whether the agent is observing valid telemetry (distinct from faultline_up).',
     '# TYPE faultline_telemetry_healthy gauge',
     `faultline_telemetry_healthy ${snapshot.health.status === 'ok' ? 1 : 0}`,
@@ -117,6 +172,8 @@ export function renderPrometheusMetrics(agent) {
   lines.push('# HELP faultline_incidents_total Incidents recorded since first run.')
   lines.push('# TYPE faultline_incidents_total gauge')
   lines.push(`faultline_incidents_total ${snapshot.incidents.total}`)
+  lines.push('# HELP faultline_incidents_open Incidents currently firing.')
+  lines.push('# TYPE faultline_incidents_open gauge')
   lines.push(`faultline_incidents_open ${snapshot.incidents.firing}`)
 
   return lines.join('\n') + '\n'
@@ -124,25 +181,50 @@ export function renderPrometheusMetrics(agent) {
 
 export function createApiServer(agent, { logger, serverConfig = {}, env = process.env } = {}) {
   const auth = createAuthenticator(serverConfig, env)
-  corsOrigin = serverConfig.corsOrigin ?? '*'
+  const cors = createCorsPolicy(serverConfig.corsOrigin ?? null)
 
   const handler = async (req, res) => {
-    const url = new URL(req.url, `http://${req.headers.host ?? 'localhost'}`)
+    const url = new URL(req.url, 'http://agent.invalid')
     const route = `${req.method} ${url.pathname}`
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : null
+    const write = isWrite(req.method, url.pathname)
 
     try {
+      const allowOrigin = cors.allowOriginFor(origin)
+      if (allowOrigin) {
+        res.setHeader('Access-Control-Allow-Origin', allowOrigin)
+        res.setHeader('Access-Control-Allow-Headers', ALLOW_HEADERS)
+        if (allowOrigin !== '*') res.setHeader('Vary', 'Origin')
+      }
+
       if (req.method === 'OPTIONS') {
         res.writeHead(204, {
-          'Access-Control-Allow-Origin': corsOrigin,
           'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
+          'Access-Control-Allow-Headers': ALLOW_HEADERS,
         })
         return res.end()
       }
 
+      // DNS rebinding: a hostile page can point its own domain at 127.0.0.1
+      // and become same-origin with a token-less agent. The Host header still
+      // carries the hostile name, so an unauthenticated agent answers only to
+      // loopback names. With a token, the token is the control.
+      if (!auth.enabled && !PROBE_PATHS.has(url.pathname) && !isLoopbackHost(hostnameOf(req.headers.host))) {
+        logger.warn('server.host_refused', { route, host: req.headers.host ?? null })
+        return json(res, 421, { error: 'unauthenticated agent only answers to a loopback Host header' })
+      }
+
+      // Cross-site request forgery: browsers attach an Origin header to every
+      // cross-origin POST/DELETE, including "simple" ones they send without a
+      // preflight. Non-browser clients (curl, scripts, Prometheus) send none.
+      if (write && origin && !cors.allowsWriteFrom(origin)) {
+        logger.warn('server.cross_origin_write_refused', { route, origin })
+        return json(res, 403, { error: `cross-origin write from ${origin} refused; list it in server.corsOrigin to allow it` })
+      }
+
       const refusal = auth.authorize(req, {
-        write: isWrite(req.method, url.pathname),
-        anonymous: url.pathname === '/health',
+        write,
+        anonymous: PROBE_PATHS.has(url.pathname),
       })
       if (refusal) {
         logger.warn('server.unauthorized', { route, status: refusal.status })
@@ -152,6 +234,20 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
         return json(res, refusal.status, { error: refusal.error })
       }
 
+      // Liveness: the process is up and its loop is making progress. Never fails
+      // because telemetry is missing, so an orchestrator restarting on it cannot
+      // loop on an exporter outage. Point livenessProbe here, not at /health.
+      if (route === 'GET /livez') {
+        const liveness = agent.liveness()
+        return json(res, liveness.status === 'ok' ? 200 : 503, {
+          status: liveness.status,
+          reasons: liveness.reasons,
+          tickInFlightSeconds: liveness.tickInFlightSeconds,
+          stallSeconds: liveness.stallSeconds,
+          lastTickCompletedAt: liveness.lastTickCompletedAt,
+        })
+      }
+
       if (route === 'GET /health') {
         const snapshot = agent.snapshot()
         const health = snapshot.health
@@ -159,7 +255,8 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
         return json(res, healthy ? 200 : 503, {
           status: health.status,
           // "The process is up" and "the telemetry is trustworthy" are separate
-          // claims. A probe that only ever saw the first is how a silent
+          // claims, served separately: /livez answers the first, this the
+          // second. A probe that only ever saw the first is how a silent
           // exporter failure gets mistaken for a quiet night.
           reasons: health.reasons,
           agent: snapshot.name,
@@ -193,7 +290,7 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
         const limit = Number(url.searchParams.get('limit') ?? 50)
         return json(res, 200, {
           incidents: agent.store.getIncidents({
-            limit: Number.isFinite(limit) ? Math.min(limit, 500) : 50,
+            limit: Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 500) : 50,
             status: url.searchParams.get('status') ?? undefined,
             service: url.searchParams.get('service') ?? undefined,
           }),
@@ -227,6 +324,11 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
       }
 
       if (route === 'POST /api/silences') {
+        // Requiring JSON keeps this out of the browser's "simple request"
+        // class, so even an allowed cross-origin caller must pass a preflight.
+        if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+          return json(res, 415, { error: 'Content-Type must be application/json' })
+        }
         let body
         try {
           body = await readJson(req)
@@ -243,13 +345,41 @@ export function createApiServer(agent, { logger, serverConfig = {}, env = proces
       }
 
       if (req.method === 'DELETE' && url.pathname.startsWith('/api/silences/')) {
-        const id = decodeURIComponent(url.pathname.split('/').pop())
+        let id
+        try {
+          id = decodeURIComponent(url.pathname.split('/').pop())
+        } catch {
+          return json(res, 400, { error: 'silence id is not valid percent-encoding' })
+        }
         if (id.startsWith('cfg:')) {
           return json(res, 400, { error: 'config-defined silences cannot be removed at runtime' })
         }
         if (!agent.silences.remove(id)) return json(res, 404, { error: 'silence not found' })
         agent.syncSilences()
         return json(res, 200, { removed: id })
+      }
+
+      // Retires a service: a decommissioned one otherwise keeps /health
+      // degraded as stale for as long as the agent runs. An open incident on it
+      // is closed as "retired", with no resolve notification.
+      if (req.method === 'DELETE' && url.pathname.startsWith('/api/services/')) {
+        let service
+        try {
+          service = decodeURIComponent(url.pathname.slice('/api/services/'.length))
+        } catch {
+          return json(res, 400, { error: 'service name is not valid percent-encoding' })
+        }
+        if (!service) return json(res, 400, { error: 'service name required: DELETE /api/services/<name>' })
+        let retired
+        try {
+          retired = await agent.retireService(service, { reason: 'operator' })
+        } catch (err) {
+          if (err.code !== 'AGENT_BUSY') throw err
+          res.setHeader('Retry-After', '5')
+          return json(res, 503, { error: err.message })
+        }
+        if (!retired) return json(res, 404, { error: `service "${service}" is not tracked` })
+        return json(res, 200, { retired: retired.service, incidentClosed: retired.incidentClosed })
       }
 
       if (route === 'GET /metrics') {

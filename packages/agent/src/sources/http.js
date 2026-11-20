@@ -1,3 +1,5 @@
+import { configuredMetrics } from './metrics.js'
+
 /**
  * Generic pull source: any endpoint that returns the current telemetry sample
  * for each service. Accepts either a bare array or `{ samples: [...] }`.
@@ -11,7 +13,9 @@ export function createHttpSource(options = {}, ctx = {}) {
   if (!options.url) throw new Error('http source requires "url"')
   const timeoutMs = options.timeoutMs ?? 10000
   const headers = options.headers ?? {}
-  const metrics = options.metrics ?? ctx.config?.detector?.metrics ?? [
+  // Includes metrics introduced by per-service rules; reading only the global
+  // list would drop those fields and leave such services incomplete forever.
+  const metrics = options.metrics ?? configuredMetrics(ctx.config) ?? [
     'p99_latency',
     'retry_rate',
     'error_rate',
@@ -36,10 +40,13 @@ export function createHttpSource(options = {}, ctx = {}) {
         throw new Error('telemetry endpoint must return an array or { samples: [...] }')
       }
 
-      const timestamp = new Date().toISOString()
       const samples = rows
         .map((row) => {
-          const sample = { service: row[mapping.service], timestamp: row.timestamp ?? timestamp }
+          // A row's own timestamp is when the endpoint observed it, and is kept:
+          // it is what lets the detector recognise a replayed row. A row without
+          // one is stamped by the detector on receipt.
+          const sample = { service: row[mapping.service] }
+          if (row.timestamp !== undefined && row.timestamp !== null) sample.timestamp = row.timestamp
           for (const metric of metrics) {
             const value = row[mapping[metric]]
             // Absent or unparseable stays absent. The detector rejects the whole

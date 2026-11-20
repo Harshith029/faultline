@@ -21,9 +21,30 @@ export const DEFAULT_CONFIG = {
     // degraded. Defaults to five collection intervals, so a single missed
     // scrape is tolerated but a silent exporter failure is not.
     noDataGraceSeconds: 300,
+    // Largest spacing between two samples that still counts as adjacent. null
+    // means 1.5 × each service's observed spacing (the median gap between its
+    // samples, never less than intervalSeconds): a late sample is tolerated, a
+    // missing one breaks a sustained run. Set it to tolerate more.
+    maxSampleGapSeconds: null,
+    // Stop tracking a service that has sent nothing at all for this long. null
+    // (the default) never retires automatically: a vanished service keeps
+    // /health degraded until it returns or is retired via the API. A service
+    // with an open incident is never retired automatically.
+    retireAfterSeconds: null,
     // Any set of numeric metrics your source emits. The engine is agnostic;
     // these three are simply the defaults the reference scenario uses.
     metrics: ['p99_latency', 'retry_rate', 'error_rate'],
+    // Per-metric bad direction: { "throughput": "down" }. Unlisted metrics are
+    // 'up' — a rise is the problem.
+    direction: null,
+    // 'mean_sigma' or 'median_mad' (robust baseline statistics).
+    statistic: 'mean_sigma',
+    // Per-metric sigma threshold, overriding zThreshold for listed metrics.
+    zThresholdPerMetric: null,
+    // Upper bound on distinct services tracked. Each one costs a rolling buffer
+    // and incident state, so a mislabelled exporter (a request id in the
+    // service label) must not be able to grow the agent without limit.
+    maxServices: 1000,
   },
   // Per-service overrides. Each entry needs a `match` (exact name or glob) and
   // may override any detector parameter for the services it matches.
@@ -40,7 +61,9 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     host: '127.0.0.1',
     port: 8787,
-    corsOrigin: '*',
+    // Browser origins allowed to read the API: null (none), "*", an origin, or
+    // a list of origins. Browser writes need an origin listed explicitly.
+    corsOrigin: null,
     // Tokens come from the environment so a committed config never holds one.
     auth: { tokenEnv: 'FAULTLINE_API_TOKEN', readOnlyTokenEnv: 'FAULTLINE_READ_TOKEN', allowAnonymousRead: false },
     tls: null,
@@ -80,6 +103,7 @@ const NUMERIC_RULES = {
   'detector.criticalityWeight': { min: 0 },
   'detector.sigmaFloorRatio': { min: 0 },
   'detector.noDataGraceSeconds': { min: 0 },
+  'detector.maxServices': { min: 1, integer: true },
   'alerting.cooldownSeconds': { min: 0 },
   'alerting.resolveAfterWindows': { min: 1, integer: true },
   'server.port': { min: 0, max: 65535, integer: true },
@@ -109,6 +133,28 @@ export function validateConfig(config) {
     if (rule.integer && !Number.isInteger(value)) errors.push(`${path} must be an integer (got ${value})`)
     if (rule.min !== undefined && value < rule.min) errors.push(`${path} must be >= ${rule.min} (got ${value})`)
     if (rule.max !== undefined && value > rule.max) errors.push(`${path} must be <= ${rule.max} (got ${value})`)
+  }
+
+  const { intervalSeconds, noDataGraceSeconds, maxSampleGapSeconds, retireAfterSeconds } = config.detector ?? {}
+  if (maxSampleGapSeconds != null) {
+    if (typeof maxSampleGapSeconds !== 'number' || !Number.isFinite(maxSampleGapSeconds)) {
+      errors.push('detector.maxSampleGapSeconds must be a finite number of seconds, or null')
+    } else if (Number.isFinite(intervalSeconds) && maxSampleGapSeconds <= intervalSeconds) {
+      errors.push(
+        `detector.maxSampleGapSeconds (${maxSampleGapSeconds}) must be greater than detector.intervalSeconds ` +
+          `(${intervalSeconds}); otherwise every sample is a gap and no signal can ever be sustained`
+      )
+    }
+  }
+  if (retireAfterSeconds != null) {
+    if (typeof retireAfterSeconds !== 'number' || !Number.isFinite(retireAfterSeconds)) {
+      errors.push('detector.retireAfterSeconds must be a finite number of seconds, or null')
+    } else if (Number.isFinite(noDataGraceSeconds) && retireAfterSeconds <= noDataGraceSeconds) {
+      errors.push(
+        `detector.retireAfterSeconds (${retireAfterSeconds}) must be greater than detector.noDataGraceSeconds ` +
+          `(${noDataGraceSeconds}), so a vanished service is reported stale before it is retired`
+      )
+    }
   }
 
   const { historyWindows, baselineWindows, minSustain } = config.detector ?? {}
@@ -207,6 +253,14 @@ export function validateConfig(config) {
       errors.push('server.tls must be an object with certFile and keyFile, or null')
     } else if (!tls.certFile || !tls.keyFile) {
       errors.push('server.tls requires both "certFile" and "keyFile"')
+    }
+  }
+
+  const corsOrigin = config.server?.corsOrigin
+  if (corsOrigin != null) {
+    const list = Array.isArray(corsOrigin) ? corsOrigin : [corsOrigin]
+    if (list.length === 0 || list.some((o) => typeof o !== 'string' || o.trim() === '')) {
+      errors.push('server.corsOrigin must be null, "*", an origin string, or a non-empty array of origin strings')
     }
   }
 
@@ -313,6 +367,9 @@ export function detectorParams(config) {
     sigmaFloorAbs: d.sigmaFloorAbs ?? undefined,
     criticalityWeight: d.criticalityWeight,
     triggerThreshold: d.triggerThreshold,
+    statistic: d.statistic ?? 'mean_sigma',
+    zThresholdPerMetric: d.zThresholdPerMetric ?? undefined,
+    direction: d.direction ?? undefined,
     // The agent alerts on the trigger threshold; "outage" is a scenario-only
     // concept, so it is pinned above any reachable score here.
     outageThreshold: Number.POSITIVE_INFINITY,

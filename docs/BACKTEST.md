@@ -10,7 +10,8 @@ matter.
 ## Dataset
 
 The [Server Machine Dataset](https://github.com/NetManAIOps/OmniAnomaly) (SMD),
-published with OmniAnomaly (MIT): 28 days of real server telemetry from a large
+published with OmniAnomaly (MIT): 16–20 days of one-minute server telemetry per
+machine in the labelled test split (~69 machine-days across the four used here) from a large
 internet company, 38 channels per machine, sampled once per minute, with
 anomaly windows labelled by the operators who ran the systems.
 
@@ -76,7 +77,7 @@ threshold beats it.
 
 | Suite | Precision | Recall |
 |---|---:|---:|
-| Synthetic scenarios (`npm run benchmark`) | 83.3% | 100% |
+| Synthetic scenarios (`npm run benchmark`, strict profile) | 82.6% | 100% |
 | Real telemetry (`npm run backtest`) | 14.1% | 80.5% |
 
 This is the single most important number in the project. The synthetic suite was

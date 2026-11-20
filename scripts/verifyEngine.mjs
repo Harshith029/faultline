@@ -56,4 +56,21 @@ if (fails.length) {
   for (const f of fails) console.log('   - ' + f)
   process.exit(1)
 }
-console.log('\n✅ PASS — engine reproduces the cascade, beats both baselines, and the counterfactual averts it.\n')
+// Report the single-metric comparison as it is. On this scenario the 3σ
+// single-metric alert fires in the same window, so claiming to beat it would
+// be false; what convergence buys is fewer false alarms elsewhere (see
+// `npm run benchmark`), not an earlier alert here.
+const singleLead = cmp.singleMetric?.leadWindows
+const versusSingle =
+  singleLead == null
+    ? 'the single-metric 3σ alert never fires'
+    : singleLead > 0
+      ? `fires ${singleLead} window(s) before the single-metric 3σ alert`
+      : singleLead === 0
+        ? 'ties the single-metric 3σ alert'
+        : `fires ${-singleLead} window(s) after the single-metric 3σ alert`
+
+console.log(
+  `\n✅ PASS — engine reproduces the cascade, fires ${cmp.staticSLO.leadWindows} window(s) before the static SLO alert, ` +
+    `${versusSingle}, and the counterfactual averts it.\n`
+)

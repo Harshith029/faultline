@@ -58,8 +58,9 @@ computation.
 - [ ] Enable TLS (`server.tls`) or terminate it at your ingress. Binding beyond
       `127.0.0.1` without TLS logs a `server.plaintext` warning.
 - [ ] Keep the API off the public internet regardless of authentication.
-- [ ] Set `server.corsOrigin` to your dashboard origin instead of `*` if a
-      browser will call the API.
+- [ ] Leave `server.corsOrigin` at its default (`null`, no browser access)
+      unless a browser must call the API; then list that exact origin rather
+      than `*`. A wildcard never authorises a browser write.
 - [ ] Store webhook URLs in `urlEnv`, never inline. Literal tokens in config are
       rejected at startup, and a webhook URL is a credential.
 - [ ] Put the state file on a volume only the agent user can read: it contains
@@ -78,9 +79,25 @@ computation.
   is a startup error, because config files get committed.
 - **TLS fails closed.** A configured but unreadable certificate stops the agent
   starting rather than silently downgrading to plaintext.
-- **`/health` is deliberately anonymous.** Probes must reach it before any
-  credential exists; it exposes no telemetry.
+- **`/health` and `/livez` are deliberately anonymous.** Probes must reach
+  them before any credential exists, and they answer on any `Host` header
+  because kubelets probe by pod IP. Neither exposes telemetry.
+- **Retiring a service is a write.** `DELETE /api/services/:name` removes a
+  service from health and ranking, so it needs the full token and passes the
+  same cross-origin checks as creating a silence.
+- **Bedrock cannot be enabled on an anonymous Lambda API.** The template's
+  `NoBedrockOnAnonymousApi` rule refuses `ApiAuthMode=none` with a model
+  configured, so no anonymous caller can cause billed model invocations; the
+  dashboard also fetches the API's explanation only when asked.
 - **Request bodies are capped** at 64 KB.
+- **Loopback is not treated as a trust boundary against the browser.** A page
+  in the operator's browser can reach `127.0.0.1`, so the token-less agent
+  refuses writes carrying a foreign `Origin` header (cross-site request
+  forgery), requires `application/json` to create a silence (no
+  preflight-free "simple" request can), and answers only to a loopback `Host`
+  header (DNS rebinding). No CORS headers are sent unless configured.
+- **Distinct services are capped** (`detector.maxServices`, default 1000), so
+  a high-cardinality service label cannot grow memory without bound.
 
 ## Known limitations
 

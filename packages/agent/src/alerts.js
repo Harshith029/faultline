@@ -14,8 +14,11 @@ const nextIncidentId = (service, startedAtMs) => {
  *    alert per window.
  *  - It resolves only after `resolveAfterWindows` consecutive clean windows,
  *    so a single clean sample mid-incident does not close it prematurely.
- *  - After resolution a cooldown suppresses immediate re-opening, which is what
- *    stops a flapping service from paging someone every window.
+ *  - After resolution a cooldown holds the page for a re-trigger, which is what
+ *    stops a flapping service from paging someone every window. The re-trigger
+ *    is still recorded as an incident (marked `heldUntil`): dropping it would
+ *    leave a hole in the history exactly where a flapping service needs one.
+ *    The agent pages for it only if it is still firing once the cooldown ends.
  */
 export class AlertManager {
   constructor({ cooldownSeconds = 300, resolveAfterWindows = 3 } = {}) {
@@ -31,6 +34,31 @@ export class AlertManager {
       this.states.set(service, state)
     }
     return state
+  }
+
+  isFiring(service) {
+    return this.states.get(service)?.status === 'firing'
+  }
+
+  /**
+   * Forgets a service's lifecycle state. If an incident is open it is returned
+   * closed as `retired`, never `resolved`: the service was taken out of
+   * monitoring, not observed to recover, and a resolve would tell whoever was
+   * paged that it had.
+   */
+  retire(service, nowMs = Date.now()) {
+    const state = this.states.get(service)
+    this.states.delete(service)
+    if (state?.status !== 'firing' || !state.incident) return null
+
+    const endedAt = new Date(nowMs).toISOString()
+    return {
+      ...state.incident,
+      status: 'retired',
+      endedAt,
+      endReason: 'service_retired',
+      durationMs: nowMs - Date.parse(state.incident.startedAt),
+    }
   }
 
   snapshot() {
@@ -87,14 +115,7 @@ export class AlertManager {
         return { type: 'updated', incident }
       }
 
-      if (state.lastResolvedAt !== null && nowMs - state.lastResolvedAt < this.cooldownMs) {
-        return {
-          type: 'suppressed',
-          service,
-          reason: 'cooldown',
-          retryAfterMs: this.cooldownMs - (nowMs - state.lastResolvedAt),
-        }
-      }
+      const inCooldown = state.lastResolvedAt !== null && nowMs - state.lastResolvedAt < this.cooldownMs
 
       const incident = {
         id: nextIncidentId(service, nowMs),
@@ -111,6 +132,7 @@ export class AlertManager {
         signals: evaluation.qualified_signals,
         windowsFiring: 1,
         metrics: evaluation.metrics,
+        ...(inCooldown ? { heldUntil: new Date(state.lastResolvedAt + this.cooldownMs).toISOString() } : {}),
       }
       state.status = 'firing'
       state.incident = incident

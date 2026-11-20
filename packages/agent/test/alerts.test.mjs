@@ -60,17 +60,26 @@ test('a clean window mid-incident resets the recovery streak', () => {
   assert.equal(after.clearStreak, 1)
 })
 
-test('cooldown suppresses immediate re-opening after resolution', () => {
+test('a re-trigger inside the cooldown is recorded but held, not dropped', () => {
   const alerts = new AlertManager({ cooldownSeconds: 60, resolveAfterWindows: 1 })
   alerts.evaluate({ service: 'api', evaluation: evaluation(true), nowMs: 1000 })
   alerts.evaluate({ service: 'api', evaluation: evaluation(false), nowMs: 2000 })
 
-  const suppressed = alerts.evaluate({ service: 'api', evaluation: evaluation(true), nowMs: 5000 })
-  assert.equal(suppressed.type, 'suppressed')
-  assert.equal(suppressed.reason, 'cooldown')
+  const held = alerts.evaluate({ service: 'api', evaluation: evaluation(true), nowMs: 5000 })
+  assert.equal(held.type, 'opened', 'the re-trigger must exist in the incident history')
+  assert.equal(held.incident.heldUntil, new Date(2000 + 60000).toISOString())
 
-  const reopened = alerts.evaluate({ service: 'api', evaluation: evaluation(true), nowMs: 70000 })
-  assert.equal(reopened.type, 'opened')
+  // Still firing after the cooldown: the same incident continues; the agent
+  // decides to page for it now that it is no longer held.
+  const later = alerts.evaluate({ service: 'api', evaluation: evaluation(true), nowMs: 70000 })
+  assert.equal(later.type, 'updated')
+  assert.equal(later.incident.id, held.incident.id)
+})
+
+test('an incident outside any cooldown is not held', () => {
+  const alerts = new AlertManager({ cooldownSeconds: 60, resolveAfterWindows: 1 })
+  const opened = alerts.evaluate({ service: 'api', evaluation: evaluation(true), nowMs: 1000 })
+  assert.equal(opened.incident.heldUntil, undefined)
 })
 
 test('services have independent incident state', () => {

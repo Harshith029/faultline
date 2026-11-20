@@ -17,6 +17,13 @@ plain-language summary. This is optional: leave `BedrockModelId` empty and it
 always serves the deterministic `hypothesis_fallback` stored alongside the
 window.
 
+The explanation for a given service, window and model is cached inside a warm
+Lambda container, because the stored timeline does not change between requests:
+successes for `HYPOTHESIS_CACHE_SECONDS` (default 900), failures for 60 seconds
+so a broken model is not called in a loop. The cache is per container, so a cold
+start or a second concurrent container calls the model again. A model call that
+exceeds its 2.5 s budget is aborted, not left running in the background.
+
 ## Local verification
 
 ```bash
@@ -49,6 +56,10 @@ npm run lint:iac
 ```
 
 Run from the repository root. It reports which Python interpreter it used.
+Error and warning findings fail the check. Informational findings (cfn-lint's
+I-series rules) are printed as `note:` lines but do not fail it, matching
+cfn-lint's own default — new advisory rules ship regularly and should not break
+the build on their own.
 
 cfn-lint is a Python tool and its console script is often not on `PATH` — pip
 installs it against one interpreter while the shell resolves `python` to another
@@ -73,7 +84,7 @@ sam deploy --guided --template template.yaml
 | `CreateTable` | `true` | Set `false` to attach to an existing table |
 | `BedrockModelId` | *(empty)* | Empty disables Bedrock entirely; the fallback is always served |
 | `LiveApiName` | *(empty)* | Empty disables `?source=live`; otherwise the API Gateway `ApiName` dimension |
-| `CorsAllowOrigin` | `'*'` | Quote the value. `*` is for a public read-only demo only |
+| `CorsAllowOrigin` | `'*'` | Quote the value. It answers preflights and, passed to the function as `CORS_ALLOW_ORIGIN`, every actual response too. `*` is for a public read-only demo only; CORS decides which pages may read a response, it is not access control |
 | `LogRetentionDays` | `14` | CloudWatch Logs retention |
 
 ### Choosing `ApiAuthMode`
@@ -88,11 +99,14 @@ account without someone deciding who may call the API.
 | `api-key` | Requires `x-api-key`; creates a usage plan with a 10,000/day quota | The key must be distributed to callers; a browser bundle cannot hold one secretly |
 | `none` | Open to the internet | Anyone can read your detection history |
 
-**The combination to avoid is `ApiAuthMode=none` with `BedrockModelId` set.** In
-that configuration any anonymous caller can drive billed model invocations. The
-API is throttled (20 burst / 10 rps), which bounds the rate but does not prevent
-it. The stack outputs `ApiAuthModeOut` and `BedrockEnabled` so this pairing is
-visible after deploy rather than something you have to infer.
+**`ApiAuthMode=none` with `BedrockModelId` set is refused at deploy time.** In
+that configuration any anonymous caller could drive billed model invocations,
+and throttling (20 burst / 10 rps) plus the per-container cache only bound the
+rate; they do not prevent it. The template's `NoBedrockOnAnonymousApi` rule
+fails the deploy before any resource is created. For a Bedrock-enabled stack,
+the `api-key` usage plan (10,000 requests a day) is the spend bound. The stack
+still outputs `ApiAuthModeOut` and `BedrockEnabled`, so the configuration in
+force is visible after deploy.
 
 The dashboard sends unauthenticated `fetch` calls today
 (`frontend/dashboard/src/timelineApi.js`). Picking `iam` or `api-key` therefore
@@ -130,6 +144,10 @@ The stack output `ApiUrl` is what the dashboard expects:
 VITE_API_URL=https://<id>.execute-api.<region>.amazonaws.com/prod
 ```
 
+The dashboard never calls the API on page load. The scenario's explanation is
+sample text until someone clicks **Load API explanation**, and live mode is
+fetched only when selected, so opening the page cannot cause a model call.
+
 ## Notes on the live path
 
 `client_error_rate` is API Gateway's `4XXError`, which counts every client-side
@@ -141,3 +159,16 @@ Minutes with no datapoint are omitted from `raw` and reported in `data_quality`
 rather than being filled with zeros. A fabricated `0 ms` latency is
 indistinguishable from a genuinely idle service, and would be folded into the
 detector's baseline as if it had been observed.
+
+`window_number` in `raw` is the minute's slot in the hour (1–60), not its
+position among complete rows, so a missing minute shows as a jump; the response
+also carries `window_seconds: 60`. Earlier versions renumbered the complete
+rows 1, 2, 3…, which made minutes either side of a hole look adjacent and let a
+sustained run span missing data. The dashboard runs the engine with
+`windowSeconds`, so adjacency is checked against the timestamps as well.
+
+## Runtime
+
+The function runs on `nodejs22.x`, and the CI `lambda` job tests on Node 22 to
+match. Node 22 leaves security support in April 2027; move both to
+`nodejs24.x` / Node 24 before then.

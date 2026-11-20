@@ -23,6 +23,11 @@ const firstIndex = (windows, predicate) => {
 // the benchmark measures the configuration people actually run.
 export const BENCH_HISTORY_WINDOWS = 40
 
+// Scenario windows are one minute apart, as the agent's default interval is.
+// Declaring it means the benchmark runs the same time-continuity rules (holes
+// break sustained runs, replays are dropped) that the deployed agent applies.
+export const BENCH_INTERVAL_SECONDS = 60
+
 const silentLogger = { debug() {}, info() {}, warn() {}, error() {} }
 
 /**
@@ -56,7 +61,12 @@ export function faultlineRollingDetector(
   params = BENCH_PARAMS,
   { historyWindows = BENCH_HISTORY_WINDOWS } = {}
 ) {
-  const detector = new RollingDetector({ params, historyWindows, logger: silentLogger })
+  const detector = new RollingDetector({
+    params,
+    historyWindows,
+    intervalSeconds: BENCH_INTERVAL_SECONDS,
+    logger: silentLogger,
+  })
 
   let firedAt = null
   let peakR = 0

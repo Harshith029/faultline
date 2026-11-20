@@ -1,8 +1,12 @@
-import { METRIC_META } from '@faultline/core'
+import { DEFAULT_PARAMS, metricDirection, metricMeta, metricThreshold } from '@faultline/core'
+import { isElevated } from '../lib/signals'
 
-const METRIC_ORDER = ['p99_latency', 'retry_rate', 'error_rate']
+const DIRECTION_NOTES = { down: 'a fall is the problem', both: 'either direction is a problem' }
 
 const fmt = (x, n = 2) => Number(x).toFixed(n)
+
+// Millisecond-scale metrics read better as integers; rates keep two decimals.
+const digitsFor = (key) => (metricMeta(key).unit === 'ms' ? 0 : 2)
 
 export default function DetectionEnginePanel({ engine, activeWindow, comparison, params }) {
   const w = engine.windows[activeWindow - 1]
@@ -52,14 +56,23 @@ export default function DetectionEnginePanel({ engine, activeWindow, comparison,
           <span>z = (x − μ) / σ</span>
           <span className="text-right">Status</span>
         </div>
-        {METRIC_ORDER.map((key) => {
-          const meta = METRIC_META[key]
+        {(params.metrics ?? DEFAULT_PARAMS.metrics).map((key) => {
+          const meta = metricMeta(key)
           const base = engine.baselines[key]
           const raw = w.raw[key]
           const z = w.metrics[meta.zKey]
           const sig = qualified.find((s) => s.metric === meta.zKey)
           const isQualified = Boolean(sig)
-          const elevated = z >= params.zThreshold
+          // The engine's test: past this metric's own threshold, in its bad
+          // direction. A raw `z >= zThreshold` called every falling metric
+          // nominal even when the engine had qualified it.
+          const elevated = isElevated(w, key, params)
+          const threshold = metricThreshold(key, params)
+          const directionNote = DIRECTION_NOTES[metricDirection(key, params)]
+          const ruleNote = [
+            directionNote,
+            threshold !== params.zThreshold ? `qualifies at ${fmt(threshold, 1)}σ` : null,
+          ].filter(Boolean)
           const tone = isQualified
             ? 'text-rose-300'
             : elevated
@@ -76,13 +89,18 @@ export default function DetectionEnginePanel({ engine, activeWindow, comparison,
               key={key}
               className="grid grid-cols-[1.2fr,0.8fr,1.4fr,0.9fr] items-center gap-2 border-b border-white/5 px-4 py-3 text-sm last:border-0"
             >
-              <span className="font-medium text-slate-200">{meta.label}</span>
+              <span className="font-medium text-slate-200">
+                {meta.label}
+                {ruleNote.length > 0 && (
+                  <span className="block text-[10px] font-normal text-slate-500">{ruleNote.join(' · ')}</span>
+                )}
+              </span>
               <span className="font-mono text-slate-300">
-                {fmt(raw, key === 'p99_latency' ? 0 : 2)}
+                {fmt(raw, digitsFor(key))}
                 <span className="ml-0.5 text-[11px] text-slate-500">{meta.unit}</span>
               </span>
               <span className="font-mono text-xs text-slate-400">
-                ({fmt(raw, key === 'p99_latency' ? 0 : 2)} − {fmt(base.mean, key === 'p99_latency' ? 0 : 2)}) / {fmt(base.sigma, 2)} ={' '}
+                ({fmt(raw, digitsFor(key))} − {fmt(base.mean, digitsFor(key))}) / {fmt(base.sigma, 2)} ={' '}
                 <span className={`font-semibold ${tone}`}>{fmt(z)}σ</span>
               </span>
               <span className={`text-right text-xs font-medium ${tone}`}>{statusLabel}</span>
@@ -118,7 +136,8 @@ export default function DetectionEnginePanel({ engine, activeWindow, comparison,
           </span>
           <span className="text-slate-600">·</span>
           <span>
-            confidence <span className="font-mono text-slate-300">{Math.round(w.confidence * 100)}%</span>
+            confidence index <span className="font-mono text-slate-300">{Math.round(w.confidence * 100)}%</span>{' '}
+            <span className="text-slate-500">(1 − e^(−R/2.5): a transform of R, not a probability)</span>
           </span>
         </div>
       </div>

@@ -9,9 +9,14 @@
  * the package is installed, just not reachable the way it was invoked.
  *
  * So rather than assuming one invocation, this tries each candidate in turn and
- * reports which one worked. It exits non-zero on findings, and separately
- * non-zero with an explicit UNAVAILABLE message if no interpreter has cfn-lint,
- * so "not installed" is never mistaken for "no findings".
+ * reports which one worked. It exits non-zero on error or warning findings, and
+ * separately non-zero with an explicit UNAVAILABLE message if no interpreter has
+ * cfn-lint, so "not installed" is never mistaken for "no findings".
+ *
+ * Informational (I-series) findings are printed but do not fail the check —
+ * the same default as cfn-lint's own CLI. CI installs the latest cfn-lint, and
+ * new advisory rules ship regularly; letting each one break the build would
+ * make the gate fail for reasons unrelated to the template's correctness.
  */
 import { spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
@@ -20,15 +25,22 @@ import { fileURLToPath } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const template = resolve(root, 'backend/lambda/timelineHandler/template.yaml')
 
-// Emits one line per finding, then a count. Using the API avoids depending on
-// the console script being installed and on PATH.
+// Emits one line per finding prefixed by its severity letter, then the total
+// and blocking counts. A finding whose rule id cannot be read counts as
+// blocking. Using the API avoids depending on the console script being
+// installed and on PATH.
 const PROGRAM = `
 import sys
 from cfnlint import api
 matches = api.lint_all(open(sys.argv[1], encoding='utf-8').read())
+blocking = 0
 for m in matches:
-    print(m)
-print('FINDINGS', len(matches))
+    rule_id = str(getattr(getattr(m, 'rule', None), 'id', '') or 'E')
+    severity = rule_id[0].upper()
+    if severity != 'I':
+        blocking += 1
+    print(severity, str(m).replace('\\n', ' '))
+print('FINDINGS', len(matches), blocking)
 `
 
 const candidates = [
@@ -61,21 +73,34 @@ for (const python of candidates) {
 
   const lines = output.split(/\r?\n/)
   const countLine = lines.pop() ?? ''
-  const findings = Number(countLine.replace('FINDINGS', '').trim())
+  const counts = /^FINDINGS (\d+) (\d+)$/.exec(countLine.trim())
 
-  if (!Number.isFinite(findings)) {
+  if (!counts) {
     console.error('cfn-lint produced unparseable output:')
     console.error(output)
     process.exit(1)
   }
 
-  if (findings === 0) {
-    console.log('0 findings.')
+  const findings = Number(counts[1])
+  const blocking = Number(counts[2])
+
+  for (const line of lines) {
+    const severity = line.charAt(0)
+    const text = line.slice(2)
+    if (severity === 'I') console.log(`note: ${text}`)
+    else console.error(text)
+  }
+
+  if (blocking === 0) {
+    console.log(
+      findings === 0
+        ? '0 findings.'
+        : `0 blocking findings (${findings} informational, reported above and not failing the check).`
+    )
     process.exit(0)
   }
 
-  for (const line of lines) console.error(line)
-  console.error(`${findings} finding(s).`)
+  console.error(`${blocking} blocking finding(s), ${findings - blocking} informational.`)
   process.exit(1)
 }
 

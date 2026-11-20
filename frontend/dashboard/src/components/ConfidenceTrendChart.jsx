@@ -31,13 +31,14 @@ export default function ConfidenceTrendChart({ windows, activeWindow }) {
       <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="text-[11px] uppercase tracking-[0.28em] text-slate-500">
-            Model alignment
+            Risk transform
           </div>
           <div className="mt-2 text-2xl font-semibold text-white">
-            Detection Confidence
+            Confidence index
           </div>
-          <div className="mt-2 text-sm text-slate-400">
-            Confidence builds as more evidence converges across adjacent windows.
+          <div className="mt-2 max-w-2xl text-sm text-slate-400">
+            1 − e^(−R/2.5), capped at 99%. It moves with the risk score alone; no labelled data has
+            calibrated it, so it is not the probability that an incident is real.
           </div>
         </div>
 
@@ -53,7 +54,7 @@ export default function ConfidenceTrendChart({ windows, activeWindow }) {
               borderColor: `${confColor}35`,
             }}
           >
-            {confPct}% confidence
+            {confPct}% index
           </span>
         </div>
       </div>
@@ -61,7 +62,7 @@ export default function ConfidenceTrendChart({ windows, activeWindow }) {
       <div className="chart-shell rounded-[28px] border border-white/10 p-4">
         <div className="mb-3 flex items-center justify-between gap-3 text-xs">
           <span className="text-slate-400">
-            Current classifier certainty for this timeline stage
+            A bounded transform of R, not a classifier probability
           </span>
           <span className="text-slate-500">
             {alertWindow ? `Alert checkpoint at W${alertWindow}` : 'No alert in view'}
@@ -106,7 +107,7 @@ export default function ConfidenceTrendChart({ windows, activeWindow }) {
                 fontSize: '12px',
                 boxShadow: '0 24px 50px -30px rgba(2, 6, 23, 0.9)',
               }}
-              formatter={(value) => [`${Math.round(value * 100)}%`, 'Confidence']}
+              formatter={(value) => [`${Math.round(value * 100)}%`, 'Confidence index']}
               labelFormatter={(label) => `Window ${label}`}
             />
 

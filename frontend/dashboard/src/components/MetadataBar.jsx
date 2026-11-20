@@ -46,6 +46,11 @@ const FaultlineMark = () => (
   </svg>
 )
 
+const SOURCE_BADGES = {
+  scenario: { label: 'Sample scenario', className: 'border-amber-400/30 bg-amber-400/10 text-amber-200' },
+  live: { label: 'Live · CloudWatch', className: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200' },
+}
+
 export default function MetadataBar({
   serviceId,
   activeWindow,
@@ -53,12 +58,18 @@ export default function MetadataBar({
   outage,
   timestamp,
   totalWindows = 12,
+  source = 'scenario',
+  signalCount = 0,
 }) {
+  // From the window's own data. This used to switch to "instability" at window
+  // 5 whatever the telemetry said, because that is where the bundled scenario
+  // starts to drift — a scripted cue shown as if it were an observation.
   const status = outage || triggered
     ? STATUS_CONFIG.cascade
-    : activeWindow >= 5
+    : signalCount > 0
       ? STATUS_CONFIG.instability
       : STATUS_CONFIG.nominal
+  const badge = SOURCE_BADGES[source] ?? SOURCE_BADGES.scenario
   const progress = totalWindows > 0 ? (activeWindow / totalWindows) * 100 : 0
 
   const metadataItems = [
@@ -101,8 +112,8 @@ export default function MetadataBar({
                   <div className="text-2xl font-semibold tracking-[0.32em] text-white">
                     FAULTLINE
                   </div>
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-slate-400">
-                    Live telemetry
+                  <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.24em] ${badge.className}`}>
+                    {badge.label}
                   </span>
                   <a
                     href="#"

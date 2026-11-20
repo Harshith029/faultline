@@ -1,7 +1,7 @@
 {
   "name": "faultline",
   "version": "1.0.0",
-  "description": "Reliability intelligence for distributed systems: deterministic cascade-failure detection with an AI explanation layer",
+  "description": "Per-service multivariate drift detection: a deterministic monitoring agent, with an optional AI explanation layer in the AWS Lambda variant",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -27,7 +27,7 @@
     "lint:iac": "node scripts/lintTemplate.mjs"
   },
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": ">=22.12.0"
   },
   "devDependencies": {
     "eslint": "^9.39.5",

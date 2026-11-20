@@ -11,14 +11,26 @@ export const DEFAULT_PARAMS = {
   sloMetric: 'error_rate',
   // 'mean_sigma' (classic z-score) or 'median_mad' (robust to spiky channels).
   statistic: 'mean_sigma',
+  // Which way is bad, per metric: 'up' (default), 'down' (throughput, cache
+  // hit rate — a fall is the failure) or 'both'.
+  direction: null,
+  // Expected seconds between windows. When set, windows whose timestamps are
+  // further apart than `maxGapSeconds` (default 1.5 × windowSeconds) are not
+  // adjacent, so a sustained run cannot continue across the hole. null leaves
+  // adjacency to `window_number` alone.
+  windowSeconds: null,
+  maxGapSeconds: null,
 }
 
 const METRIC_KEYS = DEFAULT_PARAMS.metrics
+
+export const DIRECTIONS = ['up', 'down', 'both']
 
 export const METRIC_META = {
   p99_latency: { label: 'P99 latency', unit: 'ms', zKey: 'p99_latency_z' },
   retry_rate: { label: 'Retry rate', unit: '%', zKey: 'retry_rate_z' },
   error_rate: { label: 'Error rate', unit: '%', zKey: 'error_rate_z' },
+  client_error_rate: { label: 'Client error rate', unit: '%', zKey: 'client_error_rate_z' },
 }
 
 const humanize = (metric) =>
@@ -34,6 +46,82 @@ export function metricMeta(metric) {
 
 const metricsOf = (params) =>
   Array.isArray(params?.metrics) && params.metrics.length > 0 ? params.metrics : METRIC_KEYS
+
+/**
+ * Reads one metric from one window, refusing to invent a value.
+ *
+ * A missing metric used to become 0 here. Zero is a measurement — "no errors",
+ * "no latency" — so coercing to it turns lost telemetry into perfect health,
+ * drags the baseline toward a value nothing observed, and can hide a real
+ * incident. Callers must drop or repair incomplete windows before scoring.
+ */
+function valueOf(window, metric, index) {
+  const value = window?.[metric]
+  const numeric = value === null || value === undefined || value === '' ? Number.NaN : Number(value)
+  if (!Number.isFinite(numeric)) {
+    throw new Error(
+      `window ${window?.window_number ?? index + 1} has no finite value for "${metric}" ` +
+        `(got ${JSON.stringify(value)}). Missing telemetry is not treated as zero; ` +
+        'drop or repair incomplete windows before scoring them.'
+    )
+  }
+  return numeric
+}
+
+const seriesOf = (raw, metric) => raw.map((w, i) => valueOf(w, metric, i))
+
+/** The direction in which a metric moving counts as a problem: 'up', 'down' or 'both'. */
+export const metricDirection = (metric, params = DEFAULT_PARAMS) => params.direction?.[metric] ?? 'up'
+
+/**
+ * Turns a signed z-score into "evidence of a problem" for the metric's bad
+ * direction, so qualification and scoring stay one-sided arithmetic. A display
+ * that compares raw z against a threshold misreads every 'down' metric; it has
+ * to compare this instead.
+ */
+export const orientZ = (z, direction) => (direction === 'down' ? -z : direction === 'both' ? Math.abs(z) : z)
+
+const directionFor = metricDirection
+const orient = orientZ
+
+const toNumber = (value) => (value === null || value === undefined || value === '' ? Number.NaN : Number(value))
+
+/**
+ * For each window, whether it is NOT adjacent to the one before it.
+ *
+ * "Sustained for minSustain windows" is a statement about consecutive moments
+ * in time, not consecutive array entries. If a minute of telemetry is missing,
+ * the windows either side of the hole are two minutes apart, and counting them
+ * as a two-window run would let minSustain be satisfied by evidence that never
+ * existed. A window starts a new run when:
+ *   - its window_number does not advance by exactly one (a slot is missing,
+ *     repeated, or out of order), or
+ *   - windowSeconds is known and its timestamp is more than maxGapSeconds
+ *     (default 1.5 × windowSeconds) after the previous window's.
+ * Windows that carry neither field keep the original positional behaviour.
+ */
+export function adjacencyBreaks(raw, params = DEFAULT_PARAMS) {
+  const windowSeconds = toNumber(params?.windowSeconds)
+  const explicitGap = toNumber(params?.maxGapSeconds)
+  const maxGapMs =
+    windowSeconds > 0 ? (explicitGap > 0 ? explicitGap : windowSeconds * 1.5) * 1000 : null
+
+  return raw.map((window, i) => {
+    if (i === 0) return false
+    const previous = raw[i - 1]
+
+    const n = toNumber(window?.window_number)
+    const p = toNumber(previous?.window_number)
+    if (Number.isFinite(n) && Number.isFinite(p) && n - p !== 1) return true
+
+    if (maxGapMs !== null) {
+      const t = Date.parse(window?.window_timestamp)
+      const pt = Date.parse(previous?.window_timestamp)
+      if (Number.isFinite(t) && Number.isFinite(pt) && t - pt > maxGapMs) return true
+    }
+    return false
+  })
+}
 
 const mean = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length
 
@@ -82,9 +170,11 @@ export function zScore(value, baseline) {
   return (value - baseline.mean) / baseline.sigma
 }
 
-function qualifyMetric(zSeries, params, threshold = params.zThreshold) {
+function qualifyMetric(zSeries, params, threshold = params.zThreshold, breaks = []) {
   let run = 0
-  return zSeries.map((z) => {
+  return zSeries.map((z, i) => {
+    // A run never continues across a hole in the telemetry.
+    if (breaks[i]) run = 0
     if (z >= threshold) run += 1
     else run = 0
     return { z, sustained: run, qualified: run >= params.minSustain }
@@ -98,8 +188,10 @@ function qualifyMetric(zSeries, params, threshold = params.zThreshold) {
  * than a rock-steady one, instead of holding every channel to a single global
  * number. Falls back to `zThreshold` for anything unlisted.
  */
-const thresholdFor = (metric, params) =>
+export const metricThreshold = (metric, params = DEFAULT_PARAMS) =>
   params.zThresholdPerMetric?.[metric] ?? params.zThreshold
+
+const thresholdFor = metricThreshold
 
 export function riskScore(qualifiedZ, params) {
   if (qualifiedZ.length === 0) return 0
@@ -107,6 +199,13 @@ export function riskScore(qualifiedZ, params) {
   return meanZ * Math.log(1 + qualifiedZ.length) * params.criticalityWeight
 }
 
+/**
+ * A bounded, monotone transform of the risk score: 1 − e^(−R/2.5), capped at
+ * 0.99. It is NOT a calibrated probability — nothing has fitted it to labelled
+ * incidents — so it orders windows exactly as R does and should be read as an
+ * index, never as "the chance this is a real incident". The field keeps its
+ * historical name, `confidence`, for compatibility.
+ */
 export function confidenceFromRisk(R) {
   if (R <= 0) return 0
   return Math.min(0.99, Math.round((1 - Math.exp(-R / 2.5)) * 100) / 100)
@@ -117,13 +216,22 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
   const baselines = {}
   const qualifiedSeries = {}
 
+  const zSeries = {}
+  const breaks = adjacencyBreaks(raw, params)
+
   for (const key of metrics) {
-    const values = raw.map((w) => Number(w[key]) || 0)
+    const values = seriesOf(raw, key)
     const base = computeBaseline(values, params)
     const absFloor = params.sigmaFloorAbs?.[key] ?? 0
     baselines[key] = absFloor > base.sigma ? { ...base, sigma: absFloor } : base
-    const zs = values.map((v) => zScore(v, baselines[key]))
-    qualifiedSeries[key] = qualifyMetric(zs, params, thresholdFor(key, params))
+    zSeries[key] = values.map((v) => zScore(v, baselines[key]))
+    const direction = directionFor(key, params)
+    qualifiedSeries[key] = qualifyMetric(
+      zSeries[key].map((z) => orient(z, direction)),
+      params,
+      thresholdFor(key, params),
+      breaks
+    )
   }
 
   const windows = raw.map((w, i) => {
@@ -133,13 +241,17 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
 
     for (const key of metrics) {
       const cell = qualifiedSeries[key][i]
+      const direction = directionFor(key, params)
       rawValues[key] = w[key]
-      zValues[metricMeta(key).zKey] = round2(cell.z)
+      // Signed, so a chart shows which way the metric actually moved.
+      zValues[metricMeta(key).zKey] = round2(zSeries[key][i])
       if (cell.qualified) {
         qualified_signals.push({
           metric: metricMeta(key).zKey,
+          // Magnitude in the bad direction: what the risk score aggregates.
           z_score: round1(cell.z),
           windows_sustained: cell.sustained,
+          ...(direction === 'up' ? {} : { direction: zSeries[key][i] < 0 ? 'down' : 'up' }),
         })
       }
     }
@@ -153,6 +265,9 @@ export function runDetection(raw, params = DEFAULT_PARAMS) {
       service_id: w.service_id ?? 'B',
       window_number: w.window_number,
       window_timestamp: w.window_timestamp,
+      // Present only where telemetry is missing just before this window, so a
+      // chart can show the hole and a reader can see why a run restarted.
+      ...(breaks[i] ? { gap_before: true } : {}),
       raw: rawValues,
       metrics: zValues,
       qualified_signals,
@@ -176,10 +291,13 @@ export function runBaselineDetectors(detectionResult, opts = {}) {
   const singleMetricZ = opts.singleMetricZ ?? 3.0
   const sloMetric = opts.sloMetric ?? detectionResult.params?.sloMetric ?? 'error_rate'
 
+  const params = detectionResult.params ?? {}
+  const metrics = metricsOf(params)
+
   const staticSLO =
     windows.find((w) => Number(w.raw?.[sloMetric]) >= sloErrorRatePct) ?? null
   const singleMetric = windows.find((w) =>
-    Object.values(w.metrics).some((z) => z >= singleMetricZ)
+    metrics.some((m) => orient(w.metrics[metricMeta(m).zKey], directionFor(m, params)) >= singleMetricZ)
   ) ?? null
 
   return {
@@ -232,9 +350,11 @@ export function applyMitigation(raw, { window, mitigation = 'circuit_breaker', p
   const metrics = metricsOf(params)
   const baselineMean = {}
   for (const k of metrics) {
-    baselineMean[k] = computeBaseline(raw.map((w) => Number(w[k]) || 0), params).mean
+    baselineMean[k] = computeBaseline(seriesOf(raw, k), params).mean
   }
-  const interventionRow = raw[window - 1]
+  const interventionIndex = raw.findIndex((w) => w.window_number === window)
+  if (interventionIndex === -1) throw new Error(`no window numbered ${window} to intervene at`)
+  const interventionRow = raw[interventionIndex]
 
   return raw.map((w) => {
     if (w.window_number < window) return { ...w }
@@ -242,8 +362,10 @@ export function applyMitigation(raw, { window, mitigation = 'circuit_breaker', p
     const out = { ...w }
     for (const k of metrics) {
       // Metrics with no explicit recovery profile fall back to a moderate decay.
+      // These rates are assumptions, not measurements: the simulator shows what
+      // the engine would score *if* recovery looked like this.
       const rate = profile.decay[k] ?? 0.5
-      const excess = (Number(interventionRow[k]) || 0) - baselineMean[k]
+      const excess = valueOf(interventionRow, k, interventionIndex) - baselineMean[k]
       const decayed = excess * Math.pow(rate, steps)
       out[k] = round2(baselineMean[k] + Math.max(decayed, 0))
     }
@@ -261,12 +383,14 @@ export function runCounterfactual(raw, { window, mitigation = 'circuit_breaker',
   const peakR = Math.max(...detection.windows.map((w) => w.R_score))
   const baselineTriggeredAt = baseline.detectionWindow?.window_number ?? null
 
-  const averted =
-    baselineTriggeredAt != null && (triggeredAt == null || window <= baselineTriggeredAt) && outageAt == null && triggeredAt == null
-  const tooLate = triggeredAt != null && window >= baselineTriggeredAt
+  const averted = baselineTriggeredAt != null && triggeredAt == null && outageAt == null
+  const tooLate = baselineTriggeredAt != null && triggeredAt != null && window >= baselineTriggeredAt
 
   let verdict
-  if (averted) {
+  if (baselineTriggeredAt == null) {
+    // Nothing fired without intervention, so there was nothing to mitigate.
+    verdict = { status: 'no_incident', label: 'No detection to mitigate — the original telemetry never triggers' }
+  } else if (averted) {
     verdict = { status: 'averted', label: 'Cascade averted — detection never fires' }
   } else if (tooLate && outageAt == null) {
     verdict = { status: 'mitigated', label: `Triggered at W${triggeredAt} — too late to prevent, but outage avoided` }

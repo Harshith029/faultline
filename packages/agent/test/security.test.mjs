@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { request as httpRequest } from 'node:http'
 import { FaultlineAgent, assertSafeExposure } from '../src/agent.js'
 import { loadConfig } from '../src/config.js'
 import { createAuthenticator, isLoopbackHost } from '../src/auth.js'
@@ -190,4 +191,113 @@ test('health stays anonymous so probes work without a token', async () => {
   assert.equal(state.status, 401, 'telemetry still requires a token')
 
   await agent.stop()
+})
+
+// --- browser attacks on a token-less loopback agent -------------------------
+//
+// "Bound to loopback" stops other machines, not other websites. A page open in
+// the operator's browser can send requests to 127.0.0.1, so the loopback
+// default has to defend against cross-site requests and DNS rebinding itself.
+
+// Sends a request with headers fetch() would not let a test control (Host).
+const rawRequest = (base, { method = 'GET', path = '/', headers = {}, body } = {}) =>
+  new Promise((resolve, reject) => {
+    const { hostname, port } = new URL(base)
+    const req = httpRequest({ hostname, port, method, path, headers }, (res) => {
+      let data = ''
+      res.on('data', (c) => (data += c))
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }))
+    })
+    req.on('error', reject)
+    if (body) req.write(body)
+    req.end()
+  })
+
+test('a cross-site "simple" POST cannot silence a token-less agent', async () => {
+  const { agent, base } = await startAgent({ host: '127.0.0.1' }, {})
+
+  // text/plain is exactly what a hostile page can send without a preflight.
+  const res = await fetch(`${base}/api/silences`, {
+    method: 'POST',
+    headers: { Origin: 'https://evil.example', 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ match: '*', reason: 'csrf' }),
+  })
+
+  assert.equal(res.status, 403)
+  assert.equal(res.headers.get('access-control-allow-origin'), null)
+  assert.equal(agent.silences.list().length, 0, 'no silence may have been created')
+  await agent.stop()
+})
+
+test('a cross-site request cannot inject faults on a token-less agent', async () => {
+  const { agent, base } = await startAgent({ host: '127.0.0.1' }, {})
+  const res = await fetch(`${base}/api/inject?service=checkout-api`, {
+    method: 'POST',
+    headers: { Origin: 'https://evil.example' },
+  })
+  assert.equal(res.status, 403)
+  await agent.stop()
+})
+
+test('creating a silence requires a JSON content type', async () => {
+  const { agent, base } = await startAgent({ host: '127.0.0.1' }, {})
+  const res = await fetch(`${base}/api/silences`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ match: '*' }),
+  })
+  assert.equal(res.status, 415)
+  assert.equal(agent.silences.list().length, 0)
+  await agent.stop()
+})
+
+test('a token-less agent refuses a non-loopback Host header (DNS rebinding)', async () => {
+  const { agent, base } = await startAgent({ host: '127.0.0.1' }, {})
+
+  const rebound = await rawRequest(base, { path: '/api/state', headers: { Host: 'evil.example:8787' } })
+  assert.equal(rebound.status, 421)
+
+  const local = await rawRequest(base, { path: '/api/state', headers: { Host: 'localhost:8787' } })
+  assert.equal(local.status, 200)
+
+  const health = await rawRequest(base, { path: '/health', headers: { Host: 'evil.example' } })
+  assert.notEqual(health.status, 421, 'health stays reachable for probes')
+  await agent.stop()
+})
+
+test('an origin listed in corsOrigin may read and write', async () => {
+  const origin = 'http://localhost:5173'
+  const { agent, base } = await startAgent({ host: '127.0.0.1', corsOrigin: [origin] }, {})
+
+  const read = await fetch(`${base}/api/state`, { headers: { Origin: origin } })
+  assert.equal(read.headers.get('access-control-allow-origin'), origin)
+
+  const write = await fetch(`${base}/api/silences`, {
+    method: 'POST',
+    headers: { Origin: origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ match: 'checkout-api' }),
+  })
+  assert.equal(write.status, 201)
+  await agent.stop()
+})
+
+test('a wildcard corsOrigin allows browser reads but never browser writes', async () => {
+  const { agent, base } = await startAgent({ host: '127.0.0.1', corsOrigin: '*' }, {})
+
+  const read = await fetch(`${base}/api/state`, { headers: { Origin: 'https://anywhere.example' } })
+  assert.equal(read.headers.get('access-control-allow-origin'), '*')
+
+  const write = await fetch(`${base}/api/silences`, {
+    method: 'POST',
+    headers: { Origin: 'https://anywhere.example', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ match: '*' }),
+  })
+  assert.equal(write.status, 403)
+  assert.equal(agent.silences.list().length, 0)
+  await agent.stop()
+})
+
+test('a malformed corsOrigin is a startup error', async () => {
+  await assert.rejects(() => buildConfig({ corsOrigin: 5 }), /server\.corsOrigin/)
+  await assert.rejects(() => buildConfig({ corsOrigin: [] }), /server\.corsOrigin/)
 })

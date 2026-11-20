@@ -1,3 +1,5 @@
+import { DIRECTIONS } from '@faultline/core'
+
 const escapeRegex = (s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
 
 export const globToRegExp = (pattern) =>
@@ -15,6 +17,7 @@ export const OVERRIDABLE = [
   'sigmaFloorAbs',
   'baselineWindows',
   'statistic',
+  'direction',
 ]
 
 /**
@@ -144,6 +147,21 @@ export function validateEffectiveProfile(effective, { historyWindows, label }) {
         }
         if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
           at(`sets zThresholdPerMetric["${metric}"] to ${JSON.stringify(value)}; expected a finite number >= 0`)
+        }
+      }
+    }
+  }
+
+  if (effective.direction != null) {
+    if (!isPlainObject(effective.direction)) {
+      at('direction must be an object of metric -> "up" | "down" | "both", or null')
+    } else {
+      for (const [metric, value] of Object.entries(effective.direction)) {
+        if (!metrics.includes(metric)) {
+          at(`sets direction for "${metric}", which is not in its metric list`)
+        }
+        if (!DIRECTIONS.includes(value)) {
+          at(`sets direction["${metric}"] to ${JSON.stringify(value)}; expected one of ${DIRECTIONS.join(', ')}`)
         }
       }
     }

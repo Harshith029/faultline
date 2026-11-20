@@ -353,6 +353,45 @@ test('a window missing any metric is reported as a gap, never zero-filled', asyn
   assert.ok(body.raw.every((w) => w.p99_latency !== 0 || w.error_rate !== 0 || w.client_error_rate !== 0))
 })
 
+test('live windows keep their minute position, so a missing minute shows as a jump', async () => {
+  // Minute -2 has no datapoints. Renumbering the remaining rows 1, 2 would make
+  // minutes -3 and -1 look adjacent, and a "sustained" run could span the hole.
+  const points = [
+    { t: minuteBefore(3), latency: 120, client: 0.02, server: 0.01 },
+    { t: minuteBefore(1), latency: 130, client: 0.03, server: 0.02 },
+  ]
+  const cloudwatch = fakeClient([cwResult(points)])
+  const handler = createHandler({ cloudwatch, env: {}, now: () => NOW, log: () => {} })
+
+  const body = parse(await handler({ queryStringParameters: { source: 'live' } }))
+
+  assert.deepEqual(
+    body.raw.map((w) => w.window_number),
+    [58, 60]
+  )
+  assert.equal(body.window_seconds, 60, 'the response states its spacing so a client can check adjacency')
+})
+
+const headersOf = async (env, event) => {
+  const cloudwatch = fakeClient([cwResult([{ t: minuteBefore(1), latency: 1, client: 0, server: 0 }])])
+  const res = await createHandler({ cloudwatch, env, now: () => NOW, log: () => {} })(event)
+  return res.headers
+}
+
+test('the CORS origin on responses follows the configured origin, not a hard-coded wildcard', async () => {
+  const live = { queryStringParameters: { source: 'live' } }
+  assert.equal((await headersOf({ CORS_ALLOW_ORIGIN: 'https://app.example.com' }, live))['Access-Control-Allow-Origin'], 'https://app.example.com')
+  // SAM's Cors setting needs the value quoted; the same string may be passed through.
+  assert.equal((await headersOf({ CORS_ALLOW_ORIGIN: "'https://app.example.com'" }, live))['Access-Control-Allow-Origin'], 'https://app.example.com')
+  assert.equal((await headersOf({}, live))['Access-Control-Allow-Origin'], '*')
+
+  const invalid = await createHandler({ env: { CORS_ALLOW_ORIGIN: 'https://app.example.com' }, log: () => {} })({
+    queryStringParameters: {},
+  })
+  assert.equal(invalid.statusCode, 400)
+  assert.equal(invalid.headers['Access-Control-Allow-Origin'], 'https://app.example.com', 'errors carry it too')
+})
+
 test('non-finite CloudWatch values are treated as missing, not as zero', async () => {
   const cloudwatch = fakeClient([
     {
@@ -404,4 +443,63 @@ test('the live query asks CloudWatch for the configured API name only', async ()
     assert.equal(q.MetricStat.Metric.Namespace, 'AWS/ApiGateway')
     assert.deepEqual(q.MetricStat.Metric.Dimensions, [{ Name: 'ApiName', Value: 'checkout-api' }])
   }
+})
+
+// --- cost controls ----------------------------------------------------------
+
+test('a repeated request for the same timeline reuses the explanation', async () => {
+  const dynamo = fakeClient([{ Items: [triggeredDdbWindow(1)] }, { Items: [triggeredDdbWindow(1)] }])
+  const bedrock = fakeClient([bedrockReply(validGenerated)])
+  let clock = 1_000_000
+  const handler = createHandler({
+    dynamo,
+    bedrock,
+    env: { TABLE_NAME: 't', BEDROCK_MODEL_ID: 'm' },
+    now: () => clock,
+    log: () => {},
+  })
+
+  const first = parse(await handler({ queryStringParameters: { service_id: 'B' } }))
+  clock += 60_000
+  const second = parse(await handler({ queryStringParameters: { service_id: 'B' } }))
+
+  assert.equal(bedrock.sent.length, 1, 'the second page view must not be a second paid model call')
+  assert.equal(first.windows[0].hypothesis.generated_by, 'bedrock')
+  assert.equal(second.windows[0].hypothesis.generated_by, 'bedrock')
+})
+
+test('a cached explanation expires', async () => {
+  const dynamo = fakeClient([{ Items: [triggeredDdbWindow(1)] }, { Items: [triggeredDdbWindow(1)] }])
+  const bedrock = fakeClient([bedrockReply(validGenerated), bedrockReply(validGenerated)])
+  let clock = 1_000_000
+  const handler = createHandler({
+    dynamo,
+    bedrock,
+    env: { TABLE_NAME: 't', BEDROCK_MODEL_ID: 'm', HYPOTHESIS_CACHE_SECONDS: '60' },
+    now: () => clock,
+    log: () => {},
+  })
+
+  await handler({ queryStringParameters: { service_id: 'B' } })
+  clock += 61_000
+  await handler({ queryStringParameters: { service_id: 'B' } })
+  assert.equal(bedrock.sent.length, 2)
+})
+
+test('a Bedrock timeout aborts the underlying request', async () => {
+  const dynamo = fakeClient([{ Items: [triggeredDdbWindow(1)] }])
+  let signal
+  const bedrock = {
+    send: (_command, options) => {
+      signal = options?.abortSignal
+      return new Promise(() => {})
+    },
+  }
+  const handler = createHandler({ dynamo, bedrock, env: { TABLE_NAME: 't', BEDROCK_MODEL_ID: 'm' }, log: () => {} })
+
+  const body = parse(await handler({ queryStringParameters: { service_id: 'B' } }))
+
+  assert.equal(body.windows[0].hypothesis.mechanism, 'deterministic fallback')
+  assert.ok(signal, 'the SDK call must receive an abort signal')
+  assert.equal(signal.aborted, true, 'the timed-out call is cancelled, not left running')
 })

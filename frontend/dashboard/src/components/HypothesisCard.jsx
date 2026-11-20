@@ -162,7 +162,7 @@ export default function HypothesisCard({ hypothesis, triggered, activeWindow, de
             background: '#0f1117', border: '1px solid #2a2d3e',
             borderRadius: '6px', padding: '4px 12px'
           }}>
-            <span style={{ fontSize: '11px', color: '#8b8fa8', display: 'block' }}>Confidence</span>
+            <span style={{ fontSize: '11px', color: '#8b8fa8', display: 'block' }}>Confidence index</span>
             <span style={{ fontSize: '13px', color: '#ffffff', fontWeight: 600 }}>{Math.round(detectionWindow.confidence * 100)}%</span>
           </div>
         </div>

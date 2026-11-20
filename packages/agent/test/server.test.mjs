@@ -100,8 +100,14 @@ test('unknown routes 404 as JSON', async () => {
   assert.equal((await res.json()).error, 'not found')
 })
 
-test('CORS preflight is answered so a browser dashboard can read the API', async () => {
-  const res = await fetch(`${base}/api/state`, { method: 'OPTIONS' })
+test('by default no browser origin is allowed to read the API', async () => {
+  const res = await fetch(`${base}/api/state`, { method: 'OPTIONS', headers: { Origin: 'https://evil.example' } })
   assert.equal(res.status, 204)
-  assert.equal(res.headers.get('access-control-allow-origin'), '*')
+  assert.equal(res.headers.get('access-control-allow-origin'), null)
+})
+
+test('a negative incident limit is clamped rather than slicing from the end', async () => {
+  const all = (await (await fetch(`${base}/api/incidents`)).json()).incidents
+  const clamped = (await (await fetch(`${base}/api/incidents?limit=-5`)).json()).incidents
+  assert.equal(clamped.length, Math.min(1, all.length))
 })

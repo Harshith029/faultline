@@ -277,3 +277,75 @@ test('counterfactual reports the unmitigated reference points', () => {
   assert.equal(cf.baselineTriggeredAt, 8)
   assert.equal(cf.baselineOutageAt, 12)
 })
+
+// --- missing data -----------------------------------------------------------
+
+const steady = (n, over = () => ({})) =>
+  Array.from({ length: n }, (_, i) => ({
+    window_number: i + 1,
+    p99_latency: 100 + (i % 3),
+    retry_rate: 1 + (i % 2) * 0.1,
+    error_rate: 0.5 + (i % 2) * 0.05,
+    ...over(i),
+  }))
+
+test('a missing metric is rejected, never scored as zero', () => {
+  for (const missing of [undefined, null, '', 'n/a', Number.NaN]) {
+    const raw = steady(10, (i) => (i === 6 ? { error_rate: missing } : {}))
+    assert.throws(() => runDetection(raw), /window 7 has no finite value for "error_rate"/, String(missing))
+  }
+})
+
+test('a genuine zero is a valid measurement', () => {
+  const raw = steady(10, () => ({ error_rate: 0 }))
+  assert.doesNotThrow(() => runDetection(raw))
+})
+
+test('metrics outside the configured set are not required', () => {
+  const raw = steady(10).map(({ retry_rate: _drop, ...rest }) => ({ ...rest, client_error_rate: 1 }))
+  const result = runDetection(raw, { ...DEFAULT_PARAMS, metrics: ['p99_latency', 'client_error_rate', 'error_rate'] })
+  assert.deepEqual(Object.keys(result.baselines), ['p99_latency', 'client_error_rate', 'error_rate'])
+  assert.equal(metricMeta('client_error_rate').unit, '%')
+})
+
+// --- direction --------------------------------------------------------------
+
+const throughputCollapse = () =>
+  steady(12, (i) => ({
+    throughput: i < 6 ? 1000 + (i % 2) * 20 : 1000 - (i - 5) * 250,
+    error_rate: i < 6 ? 0.5 : 0.5 + (i - 5) * 0.8,
+  }))
+
+test('by default a falling metric is not evidence of a problem', () => {
+  const result = runDetection(throughputCollapse(), { ...DEFAULT_PARAMS, metrics: ['throughput', 'error_rate'] })
+  assert.equal(result.detectionWindow, null, 'without direction the collapse is invisible')
+})
+
+test('direction "down" lets a collapse in a metric converge with a rise in another', () => {
+  const params = { ...DEFAULT_PARAMS, metrics: ['throughput', 'error_rate'], direction: { throughput: 'down' } }
+  const result = runDetection(throughputCollapse(), params)
+  assert.notEqual(result.detectionWindow, null)
+  const signal = result.detectionWindow.qualified_signals.find((s) => s.metric === 'throughput_z')
+  assert.ok(signal.z_score > 0, 'the score aggregates magnitude in the bad direction')
+  assert.equal(signal.direction, 'down')
+  assert.ok(result.detectionWindow.metrics.throughput_z < 0, 'the reported z keeps its sign')
+})
+
+test('direction "both" qualifies movement either way', () => {
+  const params = { ...DEFAULT_PARAMS, metrics: ['throughput', 'error_rate'], direction: { throughput: 'both' } }
+  assert.notEqual(runDetection(throughputCollapse(), params).detectionWindow, null)
+})
+
+// --- counterfactual edge cases ----------------------------------------------
+
+test('a counterfactual on telemetry that never triggers says so', () => {
+  const cf = runCounterfactual(steady(12), { window: 6 })
+  assert.equal(cf.verdict.status, 'no_incident')
+})
+
+test('a counterfactual intervenes at the window with that number, not that index', () => {
+  const shifted = RAW_TELEMETRY.map((w) => ({ ...w, window_number: w.window_number + 100 }))
+  const cf = runCounterfactual(shifted, { window: 106 })
+  assert.equal(cf.verdict.status, 'averted')
+  assert.throws(() => applyMitigation(shifted, { window: 6 }), /no window numbered 6/)
+})

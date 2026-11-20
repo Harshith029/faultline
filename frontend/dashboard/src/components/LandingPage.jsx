@@ -6,11 +6,13 @@ const FaultlineMark = ({ className = 'h-6 w-6' }) => (
   </svg>
 )
 
+// Each number says where it was measured. The lead time comes from the bundled
+// scenario; the precision from real server telemetry, where it is far lower.
 const STATS = [
-  { value: '3 windows', label: 'earlier than static SLO alerts' },
+  { value: '3 windows', label: 'earlier than a static SLO alert, on the bundled scenario' },
+  { value: '14.1%', label: 'precision on real server telemetry (4 SMD machines): rank with it, don’t page on it' },
   { value: '100%', label: 'deterministic detection math' },
   { value: '<1 ms', label: 'engine runtime, in your browser' },
-  { value: '12', label: 'window incident playback' },
 ]
 
 const FEATURES = [
@@ -31,7 +33,7 @@ const FEATURES = [
   },
   {
     title: 'Counterfactual simulation',
-    body: 'Rewind the incident, apply a circuit breaker or load shedding at any window, and watch the same engine re-run on the recovered telemetry. Act early and the outage never happens.',
+    body: 'Rewind the bundled incident, apply a modelled circuit breaker or load shedding at any window, and watch the same engine re-run on the adjusted telemetry. The recovery curves are stated assumptions, not measurements.',
     tag: 'What-if',
   },
   {
@@ -94,7 +96,7 @@ export default function LandingPage({ onLaunch }) {
             onClick={onLaunch}
             className="rounded-full bg-sky-500 px-4 py-2 text-sm font-medium text-white shadow-[0_12px_30px_-12px_rgba(56,189,248,0.7)] transition hover:bg-sky-400"
           >
-            Launch live demo
+            Open the demo
           </button>
         </nav>
       </header>
@@ -123,7 +125,7 @@ export default function LandingPage({ onLaunch }) {
               onClick={onLaunch}
               className="rounded-full bg-sky-500 px-6 py-3 text-sm font-semibold text-white shadow-[0_18px_44px_-16px_rgba(56,189,248,0.8)] transition hover:bg-sky-400"
             >
-              Launch live demo
+              Open the demo
             </button>
             <a
               href={GITHUB_URL}
@@ -149,12 +151,12 @@ export default function LandingPage({ onLaunch }) {
           <div className="mx-auto max-w-2xl text-center">
             <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-sky-400/80">Product</div>
             <h2 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">
-              Reliability intelligence, not another alert
+              Triage evidence, not another alert
             </h2>
             <p className="mt-4 text-sm leading-relaxed text-slate-400 sm:text-base">
-              Static thresholds fire when you are already failing. FAULTLINE watches how signals move
-              together over time, quantifies the risk of a forming cascade, and hands engineers a
-              diagnosis instead of a page.
+              Static thresholds fire when you are already failing. FAULTLINE watches how each service&apos;s
+              signals move together over time, scores the risk of a forming cascade, and ranks services
+              with the evidence behind each score, so you know where to look first.
             </p>
           </div>
 
@@ -219,7 +221,7 @@ export default function LandingPage({ onLaunch }) {
               onClick={onLaunch}
               className="relative mt-8 rounded-full bg-sky-500 px-7 py-3 text-sm font-semibold text-white shadow-[0_18px_44px_-16px_rgba(56,189,248,0.8)] transition hover:bg-sky-400"
             >
-              Launch live demo
+              Open the demo
             </button>
           </div>
         </section>

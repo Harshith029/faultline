@@ -29,13 +29,17 @@ const TREES = [
   {
     name: 'lambda timeline handler',
     cwd: resolve(root, 'backend/lambda/timelineHandler'),
-    args: ['audit', '--json', '--audit-level=high'],
+    // Production trees block at every severity, as docs/DEPENDENCIES.md states.
+    // At --audit-level=high a moderate Lambda advisory passed this check.
+    args: ['audit', '--json', '--omit=dev', '--audit-level=low'],
     blocking: true,
   },
   {
     name: 'dataset scripts',
     cwd: resolve(root, 'scripts'),
-    args: ['audit', '--json', '--audit-level=high'],
+    // Production trees block at every severity, as docs/DEPENDENCIES.md states.
+    // At --audit-level=high a moderate Lambda advisory passed this check.
+    args: ['audit', '--json', '--omit=dev', '--audit-level=low'],
     blocking: true,
   },
 ]

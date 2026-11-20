@@ -94,13 +94,29 @@ test('the agent recovers to healthy once valid telemetry returns', async () => {
   empty = false
   await agent.tick()
 
-  const health = agent.health()
+  // Evaluated at the instant the data arrived. Whether the assertion happens to
+  // run a millisecond later must not decide the outcome.
+  const health = agent.health(agent.lastDataAtMs)
   assert.equal(health.status, 'ok')
   assert.deepEqual(health.reasons, [])
   assert.equal(agent.snapshot().consecutiveEmptyCollections, 0)
   assert.ok(health.lastDataAt !== null)
 
   await agent.stop()
+})
+
+test('staleness is counted in whole seconds, so a probe landing a few milliseconds late cannot flip health', async () => {
+  const agent = await agentWith(async () => [], { detector: { noDataGraceSeconds: 0 } })
+  const dataAt = Date.UTC(2026, 10, 1, 12, 0, 0)
+  agent.running = true
+  agent.startedAtMs = dataAt - 60_000
+  agent.lastDataAtMs = dataAt
+
+  // Grace 0 means "data from this second": still fresh 999 ms later, stale once
+  // a whole second has passed. Previously any millisecond of delay degraded it.
+  assert.equal(agent.health(dataAt + 999).status, 'ok')
+  assert.deepEqual(agent.health(dataAt + 1000).reasons, ['telemetry_stale'])
+  assert.equal(agent.health(dataAt + 1000).secondsSinceData, 1)
 })
 
 test('health degrades when one previously healthy service becomes stale', async () => {
@@ -270,8 +286,16 @@ test('a Prometheus service that disappears from one query is reported, not zero-
   server.close()
 })
 
-const stubCloudWatch = (metricDataResults) => ({
-  cw: { send: async () => ({ MetricDataResults: metricDataResults }) },
+// Query ids are m<target>_<metric>, in DEFAULT_METRICS order: m0_0 is
+// p99_latency, m0_1 client_error_rate, m0_2 error_rate. `sent` records each
+// GetMetricData request so a test can inspect the window it asked for.
+const stubCloudWatch = (metricDataResults, sent = []) => ({
+  cw: {
+    send: async (command) => {
+      sent.push(command.input)
+      return { MetricDataResults: metricDataResults }
+    },
+  },
   GetMetricDataCommand: class {
     constructor(input) {
       this.input = input
@@ -279,14 +303,18 @@ const stubCloudWatch = (metricDataResults) => ({
   },
 })
 
+// The start of a CloudWatch period on a fixed morning, as the AWS SDK returns
+// datapoint times: Date objects, index-aligned with Values.
+const minute = (m) => new Date(Date.UTC(2026, 2, 1, 10, m))
+
 test('a CloudWatch period with no datapoint does not become a zero observation', async () => {
   const source = createCloudWatchSource(
     {
       targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
       client: stubCloudWatch([
-        { Id: 'm0_0', Values: [250] }, // p99_latency
-        { Id: 'm0_1', Values: [] }, // client_error_rate: no datapoint at all
-        { Id: 'm0_2', Values: [0.02] }, // error_rate
+        { Id: 'm0_0', Timestamps: [minute(1)], Values: [250] }, // p99_latency
+        { Id: 'm0_1', Timestamps: [], Values: [] }, // client_error_rate: no datapoint at all
+        { Id: 'm0_2', Timestamps: [minute(1)], Values: [0.02] }, // error_rate
       ]),
     },
     { logger: silentLogger }
@@ -304,9 +332,9 @@ test('the CloudWatch source no longer labels 4XX errors as a retry rate', async 
     {
       targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
       client: stubCloudWatch([
-        { Id: 'm0_0', Values: [250] },
-        { Id: 'm0_1', Values: [0.05] },
-        { Id: 'm0_2', Values: [0.02] },
+        { Id: 'm0_0', Timestamps: [minute(1)], Values: [250] },
+        { Id: 'm0_1', Timestamps: [minute(1)], Values: [0.05] },
+        { Id: 'm0_2', Timestamps: [minute(1)], Values: [0.02] },
       ]),
     },
     { logger: silentLogger }
@@ -344,6 +372,218 @@ test('a CloudWatch response missing every datapoint produces an incomplete sampl
   assert.deepEqual(result.missingMetrics, ['p99_latency', 'client_error_rate', 'error_rate'])
 
   await agent.stop()
+})
+
+test('a CloudWatch sample takes every value from the newest period all its metrics share', async () => {
+  // Latency has already published 10:02 and the error rates have not caught up.
+  // Each metric's newest value would put 10:02 latency next to 10:01 error rates.
+  const source = createCloudWatchSource(
+    {
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: stubCloudWatch([
+        { Id: 'm0_0', Timestamps: [minute(2), minute(1), minute(0)], Values: [900, 250, 240] },
+        { Id: 'm0_1', Timestamps: [minute(1), minute(0)], Values: [0.01, 0.02] },
+        { Id: 'm0_2', Timestamps: [minute(1), minute(0)], Values: [0.03, 0.04] },
+      ]),
+    },
+    { logger: silentLogger }
+  )
+
+  const [sample] = await source.collect()
+
+  assert.deepEqual(sample, {
+    service: 'api',
+    timestamp: minute(1).toISOString(),
+    p99_latency: 250,
+    client_error_rate: 1,
+    error_rate: 3,
+  })
+})
+
+test('a CloudWatch period missing one metric is passed over for the newest complete one', async () => {
+  const source = createCloudWatchSource(
+    {
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: stubCloudWatch([
+        { Id: 'm0_0', Timestamps: [minute(1), minute(0)], Values: [300, 240] },
+        { Id: 'm0_1', Timestamps: [minute(0)], Values: [0.02] }, // nothing yet for 10:01
+        { Id: 'm0_2', Timestamps: [minute(1), minute(0)], Values: [0.05, 0.04] },
+      ]),
+    },
+    { logger: silentLogger }
+  )
+
+  const [sample] = await source.collect()
+
+  // 10:01 is not completed with a zero 4XX rate or borrowed from 10:00; the
+  // whole 10:00 period is used instead.
+  assert.deepEqual(sample, {
+    service: 'api',
+    timestamp: minute(0).toISOString(),
+    p99_latency: 240,
+    client_error_rate: 2,
+    error_rate: 4,
+  })
+})
+
+test('with no complete CloudWatch period the newest one is reported incomplete, never zero-filled', async () => {
+  // Every metric has data, but no two of them share a period.
+  const source = createCloudWatchSource(
+    {
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: stubCloudWatch([
+        { Id: 'm0_0', Timestamps: [minute(2)], Values: [900] },
+        { Id: 'm0_1', Timestamps: [minute(1)], Values: [0.01] },
+        { Id: 'm0_2', Timestamps: [minute(0)], Values: [0.03] },
+      ]),
+    },
+    { logger: silentLogger }
+  )
+
+  const [sample] = await source.collect()
+  assert.deepEqual(sample, { service: 'api', timestamp: minute(2).toISOString(), p99_latency: 900 })
+
+  const agent = await agentWith(async () => [sample], {
+    detector: { metrics: ['p99_latency', 'client_error_rate', 'error_rate'] },
+  })
+  await agent.start()
+
+  const [result] = agent.snapshot().services
+  assert.equal(result.status, 'incomplete_sample')
+  assert.deepEqual(result.missingMetrics, ['client_error_rate', 'error_rate'])
+
+  await agent.stop()
+})
+
+test('a CloudWatch datapoint with no usable value or time is left out, never read as zero', async () => {
+  const source = createCloudWatchSource(
+    {
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: stubCloudWatch([
+        { Id: 'm0_0', Timestamps: [minute(1)], Values: [250, 260] }, // 260 has no time to place it
+        { Id: 'm0_1', Timestamps: [minute(1)], Values: [null] }, // Number(null) would be 0
+        { Id: 'm0_2', Timestamps: [minute(1)], Values: [0.02] },
+      ]),
+    },
+    { logger: silentLogger }
+  )
+
+  const [sample] = await source.collect()
+
+  assert.deepEqual(sample, { service: 'api', timestamp: minute(1).toISOString(), p99_latency: 250, error_rate: 2 })
+})
+
+// Two polls in which only latency has moved on: by the second, 10:02 latency is
+// published but the 10:02 error rates are not, so 10:01 is still the newest
+// complete period.
+const firstPoll = [
+  { Id: 'm0_0', Timestamps: [minute(1), minute(0)], Values: [250, 240] },
+  { Id: 'm0_1', Timestamps: [minute(1), minute(0)], Values: [0.01, 0.02] },
+  { Id: 'm0_2', Timestamps: [minute(1), minute(0)], Values: [0.03, 0.04] },
+]
+const laggingPoll = [
+  { Id: 'm0_0', Timestamps: [minute(2), minute(1)], Values: [900, 250] },
+  { Id: 'm0_1', Timestamps: [minute(1)], Values: [0.01] },
+  { Id: 'm0_2', Timestamps: [minute(1)], Values: [0.03] },
+]
+
+// A CloudWatch source whose successive collections see each response in turn.
+const cloudWatchPolls = (...responses) => {
+  let poll = 0
+  return createCloudWatchSource(
+    {
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: {
+        cw: { send: async () => ({ MetricDataResults: responses[poll++] }) },
+        GetMetricDataCommand: class {},
+      },
+    },
+    { logger: silentLogger }
+  )
+}
+
+test('a CloudWatch period read again on the next poll keeps its time and its values', async () => {
+  const source = cloudWatchPolls(firstPoll, laggingPoll)
+  const [first] = await source.collect()
+  const [again] = await source.collect()
+
+  // One period, one observation: the repeat is identical, not a 10:01 sample
+  // carrying 10:02's latency.
+  assert.deepEqual(again, first)
+})
+
+test('the detector drops a CloudWatch period read on two polls as a duplicate', async () => {
+  const source = cloudWatchPolls(firstPoll, laggingPoll)
+  const detector = new RollingDetector({
+    params: {
+      baselineWindows: 4,
+      minSustain: 2,
+      minSignals: 2,
+      zThreshold: 2,
+      triggerThreshold: 3,
+      criticalityWeight: 1,
+      sigmaFloorRatio: 0.1,
+      metrics: ['p99_latency', 'client_error_rate', 'error_rate'],
+    },
+    historyWindows: 20,
+    intervalSeconds: 60,
+    logger: silentLogger,
+  })
+  const nowMs = minute(3).getTime()
+
+  detector.ingest(await source.collect(), { nowMs })
+  detector.ingest(await source.collect(), { nowMs: nowMs + 15_000 })
+
+  // The second poll is the same 10:01 period, not a second observation.
+  // Buffering it would let one minute of data stand in for two windows.
+  assert.equal(detector.dataQuality(nowMs + 15_000).duplicateSamples, 1)
+  assert.equal(detector.buffer.size('api'), 1)
+})
+
+test('a metric the detector does not use cannot hold a CloudWatch sample back', async () => {
+  // detector.metrics leaves out client_error_rate, so its missing 10:01
+  // datapoint must not push the sample back to 10:00.
+  const source = createCloudWatchSource(
+    {
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: stubCloudWatch([
+        { Id: 'm0_0', Timestamps: [minute(1), minute(0)], Values: [300, 240] },
+        { Id: 'm0_1', Timestamps: [minute(0)], Values: [0.02] },
+        { Id: 'm0_2', Timestamps: [minute(1), minute(0)], Values: [0.05, 0.04] },
+      ]),
+    },
+    { logger: silentLogger, config: { detector: { metrics: ['p99_latency', 'error_rate'] } } }
+  )
+
+  const [sample] = await source.collect()
+
+  assert.deepEqual(sample, { service: 'api', timestamp: minute(1).toISOString(), p99_latency: 300, error_rate: 5 })
+})
+
+test('the CloudWatch query reads whole periods, never the one still in progress', async () => {
+  const sent = []
+  const periodMs = 300_000
+  const source = createCloudWatchSource(
+    {
+      periodSeconds: periodMs / 1000,
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: stubCloudWatch([], sent),
+    },
+    { logger: silentLogger }
+  )
+
+  const before = Date.now()
+  await source.collect()
+  const after = Date.now()
+
+  // Aligned to the period, every poll inside the same five minutes asks for the
+  // same boundaries, and with EndTime exclusive the period still filling up is
+  // left out.
+  const { StartTime, EndTime } = sent[0]
+  assert.equal(EndTime.getTime() % periodMs, 0)
+  assert.ok(EndTime.getTime() <= after, 'the window cannot end in the future')
+  assert.ok(EndTime.getTime() > before - periodMs, 'the window ends at the latest period boundary')
+  assert.equal(EndTime.getTime() - StartTime.getTime(), 3 * periodMs)
 })
 
 test('the cloudwatch source refuses to start when it cannot supply the configured metrics', () => {
@@ -505,4 +745,84 @@ test('restoring fresh state does not make a healthy agent look degraded', async 
   assert.deepEqual(health.staleServices, [])
 
   await agent.stop()
+})
+
+test('refusing services at the cap degrades health and is exported', async () => {
+  const agent = await agentWith(async () => [goodSample({ service: 'a' }), goodSample({ service: 'b' })], {
+    detector: { maxServices: 1 },
+  })
+  await agent.store.load()
+  await agent.tick()
+
+  const health = agent.health()
+  assert.equal(health.status, 'degraded')
+  assert.ok(health.reasons.includes('service_capacity_exceeded'))
+  const { renderPrometheusMetrics } = await import('../src/server.js')
+  assert.match(renderPrometheusMetrics(agent), /^faultline_services_rejected_total 1$/m)
+  await agent.stop()
+})
+
+test('a CloudWatch sample is stamped with the period CloudWatch observed, not when it was fetched', async () => {
+  const source = createCloudWatchSource(
+    {
+      targets: [{ service: 'api', dimensions: { ApiName: 'my-api' } }],
+      client: stubCloudWatch([
+        { Id: 'm0_0', Timestamps: [minute(1), minute(0)], Values: [250, 240] },
+        { Id: 'm0_1', Timestamps: [minute(1), minute(0)], Values: [0.01, 0.02] },
+        { Id: 'm0_2', Timestamps: [minute(1), minute(0)], Values: [0.03, 0.04] },
+      ]),
+    },
+    { logger: silentLogger }
+  )
+
+  const [sample] = await source.collect()
+  // Months before the fetch. Stamping the fetch time instead would let stale
+  // CloudWatch data keep the service looking fresh.
+  assert.equal(sample.timestamp, minute(1).toISOString())
+})
+
+test('the prometheus source refuses to start without a query for a configured metric', () => {
+  const config = { detector: { metrics: ['p99_latency', 'queue_depth'] }, services: [] }
+  assert.throws(
+    () => createPrometheusSource({ url: 'http://prom.invalid' }, { logger: silentLogger, config }),
+    /no query for configured metrics \[queue_depth\]/
+  )
+})
+
+test('the prometheus source only runs queries for metrics the detector uses', async () => {
+  const seen = []
+  const server = await listen((req, res) => {
+    seen.push(new URL(req.url, 'http://x').searchParams.get('query'))
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ status: 'success', data: { resultType: 'vector', result: [] } }))
+  })
+  try {
+    const config = { detector: { metrics: ['queue_depth', 'consumer_lag'] }, services: [] }
+    const source = createPrometheusSource(
+      { url: server.url, queries: { queue_depth: 'sum(q) by (service)', consumer_lag: 'max(lag) by (service)' } },
+      { logger: silentLogger, config }
+    )
+    await source.collect()
+    assert.deepEqual(seen, ['sum(q) by (service)', 'max(lag) by (service)'])
+  } finally {
+    server.close()
+  }
+})
+
+test('the http source extracts metrics introduced by per-service rules', async () => {
+  const server = await listen((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify([{ service: 'queue-orders', queue_depth: 40, consumer_lag: 3 }]))
+  })
+  try {
+    const config = {
+      detector: { metrics: ['p99_latency', 'retry_rate', 'error_rate'] },
+      services: [{ match: 'queue-*', metrics: ['queue_depth', 'consumer_lag'] }],
+    }
+    const [sample] = await createHttpSource({ url: server.url }, { logger: silentLogger, config }).collect()
+    assert.equal(sample.queue_depth, 40)
+    assert.equal(sample.consumer_lag, 3)
+  } finally {
+    server.close()
+  }
 })

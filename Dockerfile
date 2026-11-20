@@ -1,6 +1,9 @@
 # The agent has zero runtime dependencies, so there is nothing to install:
 # the core engine is dropped straight into node_modules and resolved from there.
-FROM node:20-alpine
+#
+# Node 24 is an LTS line with security support until April 2028. Node 20 reached
+# end of life in April 2026; an image built on it receives no further fixes.
+FROM node:24-alpine
 
 WORKDIR /app
 
@@ -28,8 +31,11 @@ ENV NODE_ENV=production \
 
 EXPOSE 8787
 
+# Liveness only. /health also fails when telemetry is stale, and an orchestrator
+# that restarts unhealthy containers would then restart-loop on an exporter
+# outage that no restart can fix. Alert on /health (or faultline_telemetry_healthy).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.FAULTLINE_PORT||8787)+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.FAULTLINE_PORT||8787)+'/livez').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 ENTRYPOINT ["node", "bin/faultline.js"]
 CMD ["start"]

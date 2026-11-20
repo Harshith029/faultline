@@ -2,41 +2,44 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ReferenceLine, ResponsiveContainer
 } from 'recharts'
+import { DEFAULT_PARAMS, metricMeta } from '@faultline/core'
 
-const METRIC_CONFIG = [
-  {
-    dataKey: 'p99',
-    name: 'Latency',
-    color: '#38BDF8',
-    gradientId: 'latency-gradient',
-    filterId: 'latency-glow',
-    description: 'P99 latency drift',
-  },
-  {
-    dataKey: 'retry',
-    name: 'Retry',
-    color: '#8B5CF6',
-    gradientId: 'retry-gradient',
-    filterId: 'retry-glow',
-    description: 'Client retry amplification',
-  },
-  {
-    dataKey: 'error',
-    name: 'Errors',
-    color: '#F43F5E',
-    gradientId: 'error-gradient',
-    filterId: 'error-glow',
-    description: 'Downstream error propagation',
-  },
+// Visual slots; the SVG gradients and glows below are defined once per slot.
+const SLOTS = [
+  { color: '#38BDF8', gradientId: 'latency-gradient', filterId: 'latency-glow' },
+  { color: '#8B5CF6', gradientId: 'retry-gradient', filterId: 'retry-glow' },
+  { color: '#F43F5E', gradientId: 'error-gradient', filterId: 'error-glow' },
 ]
 
-export default function DriftChart({ windows, activeWindow }) {
+const COPY = {
+  p99_latency: { name: 'Latency', description: 'P99 latency drift' },
+  retry_rate: { name: 'Retry', description: 'Client retry amplification' },
+  error_rate: { name: 'Errors', description: 'Server error rate drift' },
+  client_error_rate: { name: 'Client errors', description: '4XX client-side errors — not a retry count' },
+}
+
+// The chart follows the metrics the engine actually scored, so live telemetry
+// with a different metric set is drawn from its own data, not from fixed keys.
+const configFor = (metrics) =>
+  metrics.slice(0, SLOTS.length).map((metric, i) => ({
+    ...SLOTS[i],
+    dataKey: `m${i}`,
+    zKey: metricMeta(metric).zKey,
+    name: COPY[metric]?.name ?? metricMeta(metric).label,
+    description: COPY[metric]?.description ?? `${metricMeta(metric).label} drift`,
+  }))
+
+export default function DriftChart({
+  windows,
+  activeWindow,
+  metrics = DEFAULT_PARAMS.metrics,
+  threshold = DEFAULT_PARAMS.zThreshold,
+}) {
+  const METRIC_CONFIG = configFor(metrics)
   const chartData = windows.map(window => ({
     window: window.window_number,
     label: `W${window.window_number}`,
-    p99: window.metrics.p99_latency_z,
-    retry: window.metrics.retry_rate_z,
-    error: window.metrics.error_rate_z,
+    ...Object.fromEntries(METRIC_CONFIG.map((m) => [m.dataKey, window.metrics[m.zKey]])),
     triggered: window.triggered,
     outage: window.outage,
   }))
@@ -55,7 +58,7 @@ export default function DriftChart({ windows, activeWindow }) {
             Multi-signal drift across the incident window
           </div>
           <div className="mt-2 max-w-2xl text-sm text-slate-400">
-            The primary observability surface tracks how latency, retry pressure, and errors bend toward deterministic cascade detection.
+            The primary observability surface tracks how each monitored signal bends toward deterministic cascade detection.
           </div>
         </div>
 
@@ -97,7 +100,7 @@ export default function DriftChart({ windows, activeWindow }) {
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
             <span className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1.5">Auto scale (min 0-10)</span>
-            <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-amber-200">Threshold z=2</span>
+            <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-3 py-1.5 text-amber-200">Threshold z={threshold}</span>
             {cascadeWindow && (
               <span className="rounded-full border border-rose-400/20 bg-rose-400/10 px-3 py-1.5 text-rose-200">
                 Cascade marker W{cascadeWindow}
@@ -157,7 +160,9 @@ export default function DriftChart({ windows, activeWindow }) {
               />
 
               <YAxis
-                domain={[0, (dataMax) => Math.max(10, Math.ceil(dataMax * 1.05))]}
+                // Below zero too: z keeps its sign, and a metric whose failure
+                // is a fall drifts downward. A floor of 0 clipped it off-chart.
+                domain={[(dataMin) => Math.min(0, Math.floor(dataMin)), (dataMax) => Math.max(10, Math.ceil(dataMax * 1.05))]}
                 axisLine={false}
                 tickLine={false}
                 stroke="#64748b"
@@ -180,11 +185,11 @@ export default function DriftChart({ windows, activeWindow }) {
               />
 
               <ReferenceLine
-                y={2.0}
+                y={threshold}
                 stroke="#F59E0B"
                 strokeDasharray="6 4"
                 strokeWidth={1.5}
-                label={{ value: 'Threshold z=2', position: 'right', fill: '#F59E0B', fontSize: 11 }}
+                label={{ value: `Threshold z=${threshold}`, position: 'right', fill: '#F59E0B', fontSize: 11 }}
               />
 
               {cascadeWindow && (

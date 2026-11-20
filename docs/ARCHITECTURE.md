@@ -46,8 +46,8 @@ computes it with the same engine. There is no second implementation to drift.
  │ synthetic  │                       │
  └────────────┘                       ▼
                               ┌──────────────┐
-                              │ AlertManager │  open / update / resolve /
-                              │ state machine│  suppress (cooldown)
+                              │ AlertManager │  open / update / resolve;
+                              │ state machine│  cooldown holds the page
                               └──────┬───────┘
                                      │
                     ┌────────────────┼────────────────┐
@@ -122,6 +122,19 @@ ever measured. `/health` reports `degraded` once no valid telemetry has arrived
 for `detector.noDataGraceSeconds` (default 300), so a silent exporter failure
 looks like a failure rather than a quiet night.
 
+**Adjacent means adjacent in time.** `minSustain` counts consecutive windows,
+so the engine restarts a run wherever `window_number` skips or, when the
+sampling interval is known, wherever timestamps are further apart than
+`maxGapSeconds`. The agent drops replayed and out-of-order samples before they
+reach the buffer, and the live Lambda path numbers windows by their minute, so
+a missing minute shows as a jump. Elevated at minute 5 and at minute 7 is not
+two consecutive windows.
+
+**Liveness is not readiness.** `/livez` answers whether the process and its
+collection loop are alive; `/health` answers whether the telemetry is
+trustworthy. Restarting cannot fix a missing exporter, so only the first
+belongs in a liveness probe.
+
 **One incident per cascade.** Alerting per window is how monitoring gets muted.
 The state machine plus cooldown is as much of the product as the math.
 
@@ -170,14 +183,14 @@ account-specific value, and packaged reproducibly by `npm run package`.
 
 | Suite | Tests | Covers |
 |---|---:|---|
-| `packages/core/test` | 34 | Baseline math, qualification, risk scoring, counterfactuals, CSV parsing |
-| `packages/agent/test` | 180 | Config and effective-profile validation, ring buffer, incident state machine, every source, HTTP API, auth and exposure defaults, no-data handling, shutdown, end-to-end runs |
+| `packages/core/test` | 42 | Baseline math, qualification, risk scoring, missing-value rejection, metric direction, counterfactuals, CSV parsing |
+| `packages/agent/test` | 206 | Config and effective-profile validation, ring buffer, service cap, incident state machine and cooldown holds, notifier delivery and retry, every source, HTTP API, auth, cross-site and DNS-rebinding defences, no-data handling, shutdown, end-to-end runs |
 | `packages/benchmark/test` | 29 | Scenario generation, segment scoring, rolling vs fixed-baseline detectors, SMD backtest helpers |
-| `frontend/dashboard/test` | 21 | Hypothesis provenance labelling, cascade-path parsing, analyst rendering |
-| `backend/lambda/timelineHandler/test` | 23 | Mocked DynamoDB (incl. pagination), CloudWatch gaps, Bedrock success/timeout/malformed/fallback, error handling |
-| `scripts/verifyEngine.mjs` | — | Reference cascade reproduces and beats baseline detectors |
+| `frontend/dashboard/test` | 24 | Hypothesis provenance labelling, cascade-path parsing, analyst rendering, live-telemetry metric selection |
+| `backend/lambda/timelineHandler/test` | 26 | Mocked DynamoDB (incl. pagination), CloudWatch gaps, Bedrock success/timeout/abort/malformed/fallback, explanation caching, error handling |
+| `scripts/verifyEngine.mjs` | — | Reference cascade reproduces; fires before the static SLO alert (it ties single-metric 3σ on this scenario) |
 
-**287 tests total**, as of 2026-08-11. The Lambda suite is separate because the
+**327 tests total**, as of 2026-10-24. The Lambda suite is separate because the
 Lambda has its own lockfile and is installed independently; `npm test` at the
 root covers the other four. These counts are maintained by hand — re-run both
 suites before quoting them.

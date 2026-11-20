@@ -12,47 +12,44 @@ three of them, so each is audited separately in CI.
 
 ## Current status
 
-Last reviewed: 2026-08-10.
+Last reviewed: 2026-11-19.
 
-**Production dependencies: no known advisories.**
+**No known advisories in any tree, at any severity** — production and
+development alike:
 
 ```bash
-npm audit --omit=dev --audit-level=low
+npm run audit:all
 ```
 
-reports zero vulnerabilities at the root, and both the Lambda and scripts trees
-report zero at all severities.
+The November review cleared what had accumulated since August: Vitest 3 → 5
+(the critical tinypool and `@vitest/mocker` advisories; a major-version
+upgrade), Vite 8.3.8 (past the 8.2.0–8.2.2 `launch-editor` advisory), patched
+transitive `brace-expansion`, `browserslist`, `js-yaml`, `picomatch`,
+`source-map-js`, `postcss-selector-parser` and `baseline-browser-mapping`, and in
+the Lambda tree `fflate` 0.8.3 via `@smithy/middleware-compression` 4.6.2. That
+last one is a ZIP64 parsing loop in a function the handler never calls; it was
+updated regardless, because "unreachable today" is not a property anyone
+re-checks.
 
 The agent itself has no required runtime dependencies beyond `@faultline/core`.
 The AWS SDK is an optional lazy import used only by the `cloudwatch` source.
 
 ## Accepted exceptions
 
-### picomatch ≤ 2.3.1 — high — development only
+None at present.
 
-- **Advisories:** GHSA-3v7f-55p6-f55p (method injection in POSIX character
-  classes), GHSA-c2c7-rcm5-vvqj (ReDoS via extglob quantifiers).
-- **Path:** `tailwindcss@3.4.17 → chokidar/micromatch → picomatch@2.3.1`.
-- **Reachability:** not reachable in any shipped artifact. Tailwind uses
-  picomatch at build time to match the `content` globs in
-  `tailwind.config.cjs`, which are authored in this repository and are not
-  attacker-controlled. picomatch is not present in the browser bundle, the agent
-  runtime, or the Lambda artifact. Triggering either advisory requires the
-  ability to supply a glob pattern to the CSS build, which means the attacker
-  already has commit access.
-- **Why not updated:** `micromatch@4` requires `picomatch@^2.3.1`. An override
-  forcing v4 changes the API surface micromatch depends on. The real fix is
-  Tailwind 4, which moves to a new engine and requires a config and directive
-  rewrite.
-- **Remediation:** tracked as a Tailwind 4 migration. Until then the exception is
-  bounded by the CI policy below.
+The picomatch ≤ 2.3.1 exception recorded in August (GHSA-3v7f-55p6-f55p,
+GHSA-c2c7-rcm5-vvqj, via `tailwindcss@3.4.17 → chokidar/micromatch`) is
+resolved: picomatch 2.3.2 shipped the fixes within the 2.x line that
+`micromatch@4` accepts, so the Tailwind 4 migration is no longer needed for it.
 
 ## CI policy
 
 The `audit` job enforces:
 
 - **Production dependencies must be clean** at every severity, for every tree.
-  This step fails the build.
+  This step fails the build. The Lambda and scripts trees have no development
+  dependencies, so each is held to this whole.
 - **Development dependencies** are audited at `--audit-level=high` and reported.
   This step does not fail the build, because a dev-only advisory should not
   block a security fix from shipping — but its output is always printed, and any
@@ -69,9 +66,9 @@ npm audit --omit=dev --audit-level=low
 ```
 
 ```bash
-npm --prefix backend/lambda/timelineHandler audit --audit-level=high
+npm --prefix backend/lambda/timelineHandler audit --omit=dev --audit-level=low
 ```
 
 ```bash
-npm --prefix scripts audit --audit-level=high
+npm --prefix scripts audit --omit=dev --audit-level=low
 ```
