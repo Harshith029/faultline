@@ -12,7 +12,7 @@
     "frontend/dashboard"
   ],
   "scripts": {
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && node scripts/testLambda.mjs",
     "verify:engine": "node scripts/verifyEngine.mjs",
     "benchmark": "node packages/benchmark/bin/benchmark.js",
     "fetch:dataset": "node scripts/fetchDataset.mjs",

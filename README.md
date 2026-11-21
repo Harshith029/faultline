@@ -10,7 +10,6 @@
   <a href="https://github.com/Harshith029/faultline/actions/workflows/ci.yml"><img src="https://github.com/Harshith029/faultline/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
   <a href="packages/agent/package.json"><img src="https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg" alt="Zero runtime dependencies"></a>
-  <img src="https://img.shields.io/badge/tests-408%20passing-brightgreen.svg" alt="408 tests passing">
   <img src="https://img.shields.io/badge/node-%E2%89%A522.12-339933.svg" alt="Node 22.12 or newer">
 </p>
 
@@ -415,14 +414,16 @@ docs/               architecture and operations
 ## Testing
 
 ```bash
-npm test              # engine, agent, benchmark and dashboard suites (the Lambda runs its own)
+npm test              # engine, agent, benchmark, dashboard and Lambda suites
 npm run verify:engine # reference cascade assertion
 npm run benchmark     # synthetic precision/recall/lead time vs baselines
 npm run fetch:dataset # download the Server Machine Dataset (not vendored)
 npm run backtest      # replay real production telemetry
 ```
 
-Covers the engine math, config validation, incident state machine, every telemetry source, the HTTP API, and end-to-end runs asserting that a cascade produces exactly one alert, reaches the webhook, persists, and resolves.
+`npm test` runs 408 tests across those five suites. The Lambda keeps its own lockfile, so the first run also installs its dependencies from it.
+
+They cover the engine math, config validation, the incident state machine, every telemetry source, the HTTP API, the Lambda handler against mocked AWS clients, and end-to-end runs asserting that a cascade produces exactly one alert, reaches the webhook, persists, and resolves.
 
 ## Roadmap
 

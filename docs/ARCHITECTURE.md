@@ -181,19 +181,20 @@ account-specific value, and packaged reproducibly by `npm run package`.
 
 ## Testing
 
-| Suite | Tests | Covers |
-|---|---:|---|
-| `packages/core/test` | 42 | Baseline math, qualification, risk scoring, missing-value rejection, metric direction, counterfactuals, CSV parsing |
-| `packages/agent/test` | 206 | Config and effective-profile validation, ring buffer, service cap, incident state machine and cooldown holds, notifier delivery and retry, every source, HTTP API, auth, cross-site and DNS-rebinding defences, no-data handling, shutdown, end-to-end runs |
-| `packages/benchmark/test` | 29 | Scenario generation, segment scoring, rolling vs fixed-baseline detectors, SMD backtest helpers |
-| `frontend/dashboard/test` | 24 | Hypothesis provenance labelling, cascade-path parsing, analyst rendering, live-telemetry metric selection |
-| `backend/lambda/timelineHandler/test` | 26 | Mocked DynamoDB (incl. pagination), CloudWatch gaps, Bedrock success/timeout/abort/malformed/fallback, explanation caching, error handling |
-| `scripts/verifyEngine.mjs` | — | Reference cascade reproduces; fires before the static SLO alert (it ties single-metric 3σ on this scenario) |
+| Suite | Covers |
+|---|---|
+| `packages/core/test` | Baseline math, qualification, risk scoring, missing-value rejection, metric direction, counterfactuals, CSV parsing |
+| `packages/agent/test` | Config and effective-profile validation, ring buffer, service cap, incident state machine and cooldown holds, notifier delivery and retry, every source, HTTP API, auth, cross-site and DNS-rebinding defences, no-data handling, shutdown, end-to-end runs |
+| `packages/benchmark/test` | Scenario generation, segment scoring, rolling vs fixed-baseline detectors, SMD backtest helpers |
+| `frontend/dashboard/test` | Hypothesis provenance labelling, cascade-path parsing, analyst rendering, live-telemetry metric selection |
+| `backend/lambda/timelineHandler/test` | Mocked DynamoDB (incl. pagination), CloudWatch gaps, Bedrock success/timeout/abort/malformed/fallback, explanation caching, error handling |
+| `scripts/verifyEngine.mjs` | Reference cascade reproduces; fires before the static SLO alert (it ties single-metric 3σ on this scenario) |
 
-**327 tests total**, as of 2026-10-24. The Lambda suite is separate because the
-Lambda has its own lockfile and is installed independently; `npm test` at the
-root covers the other four. These counts are maintained by hand — re-run both
-suites before quoting them.
+`npm test` at the root runs the first five. The Lambda is not a root workspace:
+it keeps its own lockfile so that its deployment artifact holds only the
+dependencies it declares. `scripts/testLambda.mjs` therefore installs them from
+that lockfile on the first run, then runs the Lambda suite. The README states
+the current test count.
 
 The end-to-end test runs a full agent against an injected cascade and asserts
 that exactly one alert fires, reaches a real webhook receiver, persists to
@@ -204,7 +205,7 @@ CI runs all of it across six jobs:
 
 | Job | What it proves |
 |---|---|
-| `verify` | Lint, all four workspace suites, reference scenario, benchmark, agent smoke test, dashboard build |
+| `verify` | Lint, all five test suites (the four workspaces and the Lambda), reference scenario, benchmark, agent smoke test, dashboard build |
 | `lambda` | The handler installs from its own lockfile, imports with only its declared dependencies, passes its mocked suite, packages into an artifact, and its SAM template lints |
 | `security-defaults` | The agent refuses to start unauthenticated on a non-loopback bind, and compose publishes to loopback only |
 | `audit` | Every independent lockfile is audited; production dependencies must be clean |
