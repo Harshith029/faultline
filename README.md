@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.svg" alt="FAULTLINE — per-service multivariate drift detection" width="100%">
+  <img src="assets/banner.svg" alt="FAULTLINE: per-service multivariate drift detection" width="100%">
 </p>
 
 <h3 align="center">Catch a service going wrong while there is still time to act</h3>
@@ -23,7 +23,7 @@
 
 ---
 
-Static thresholds fire when you are already failing. FAULTLINE watches how latency, retries, and errors **drift together over time** and opens an incident while the failure is still forming — several windows before an SLO alert would trip.
+Static thresholds fire when you are already failing. FAULTLINE watches how latency, retries, and errors **drift together over time** and opens an incident while the failure is still forming, several windows before an SLO alert would trip.
 
 <p align="center">
   <img src="assets/detection.svg" alt="Three telemetry signals drifting upward together. FAULTLINE fires at window 8; a static SLO alert would not fire until window 11." width="900">
@@ -33,7 +33,7 @@ It is a real monitoring agent, not a dashboard: it runs continuously, pulls metr
 
 **Zero runtime dependencies. Runs anywhere Node runs.**
 
-> **Scope, stated plainly.** FAULTLINE evaluates each service independently against its own history. It has no dependency graph, no distributed tracing, and no deploy-event feed, so it cannot establish that one service caused a problem in another. It tells you *which metrics on a service moved together, and when* — earlier than three separate alerts would. Any cross-service ordering shown in the dashboard comes from the bundled demo scenario and is labelled as sample content. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
+> **Scope, stated plainly.** FAULTLINE evaluates each service independently against its own history. It has no dependency graph, no distributed tracing, and no deploy-event feed, so it cannot establish that one service caused a problem in another. It tells you *which metrics on a service moved together, and when*, earlier than three separate alerts would. Any cross-service ordering shown in the dashboard comes from the bundled demo scenario and is labelled as sample content. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ### Use it as a ranking signal first
 
@@ -52,7 +52,7 @@ curl localhost:8787/api/ranking
   ] }
 ```
 
-Services still building a baseline rank last with a `null` score, never as low risk — "not yet known" and "known to be fine" are different answers. Wire the webhook to a pager only once you have tuned against your own traffic and are satisfied with the false-positive rate.
+Services still building a baseline rank last with a `null` score, never as low risk: "not yet known" and "known to be fine" are different answers. Wire the webhook to a pager only once you have tuned against your own traffic and are satisfied with the false-positive rate.
 
 ---
 
@@ -74,7 +74,7 @@ The agent starts, streams synthetic telemetry for three services, and ~15 second
 While it runs, the agent is serving a real API:
 
 ```bash
-curl localhost:8787/api/ranking     # services ordered by current risk — start here
+curl localhost:8787/api/ranking     # services ordered by current risk; start here
 curl localhost:8787/livez           # liveness: the process and its collection loop are alive
 curl localhost:8787/health          # telemetry readiness, with per-service freshness
 curl localhost:8787/api/state       # current risk score per service
@@ -84,7 +84,7 @@ curl -X POST localhost:8787/api/inject?service=payments   # inject a fault on de
 ```
 
 Or with Docker. A container has to bind `0.0.0.0` inside its own network
-namespace for a published port to reach it, so a token is required — the agent
+namespace for a published port to reach it, so a token is required: the agent
 will not start without one. Compose publishes to `127.0.0.1` only:
 
 ```bash
@@ -116,7 +116,7 @@ Everything is driven by one config file. Copy [`packages/agent/faultline.config.
 }
 ```
 
-**Your own metrics, not just these three.** Latency/retries/errors are only the defaults. The engine is metric-agnostic — give it any numeric signals your system emits:
+**Your own metrics, not just these three.** Latency/retries/errors are only the defaults. The engine is metric-agnostic. Give it any numeric signals your system emits:
 
 ```json
 {
@@ -150,7 +150,7 @@ Convergence scoring works identically: any two of those drifting together opens 
 
 `GET /api/state` reports which profile matched each service, so you can tell at a glance whether a rule is actually in effect.
 
-**Mute it during a deploy.** Silences suppress paging without stopping detection — the risk score stays visible and the incident is still recorded, so postmortems keep the data. Recurring maintenance windows live in config; ad-hoc ones go through the API, because during an incident you can't restart the agent to mute it:
+**Mute it during a deploy.** Silences suppress paging without stopping detection: the risk score stays visible and the incident is still recorded, so postmortems keep the data. Recurring maintenance windows live in config; ad-hoc ones go through the API, because during an incident you can't restart the agent to mute it:
 
 ```bash
 curl -X POST localhost:8787/api/silences \
@@ -160,7 +160,7 @@ curl -X POST localhost:8787/api/silences \
 
 If an incident opens while muted and is *still firing* when the window ends, it pages then rather than being lost.
 
-**Missing telemetry is never treated as good telemetry.** A sample is accepted only if every configured metric is present and finite. If a metric is absent, null, or unparseable, the whole sample is rejected and counted — it is not coerced to `0`. That coercion is the failure mode this guards: lose your error-rate series and a zero-filled sample reads as a flawless 0% error rate, which suppresses the convergence requirement and can mute a live incident while the agent still reports healthy.
+**Missing telemetry is never treated as good telemetry.** A sample is accepted only if every configured metric is present and finite. If a metric is absent, null, or unparseable, the whole sample is rejected and counted. It is not coerced to `0`. That coercion is the failure mode this guards: lose your error-rate series and a zero-filled sample reads as a flawless 0% error rate, which suppresses the convergence requirement and can mute a live incident while the agent still reports healthy.
 
 `/health` therefore answers two separate questions:
 
@@ -178,11 +178,11 @@ If an incident opens while muted and is *still firing* when the window ends, it 
 
 The engine enforces the same rule on its own: `runDetection` throws on a window that lacks a configured metric instead of scoring it as zero, so a library caller or the dashboard cannot reintroduce the coercion by accident.
 
-A collection that succeeds but returns nothing is counted as empty, not as a healthy tick, and after `detector.noDataGraceSeconds` (default 300) the agent reports `degraded` with a 503. A previously healthy service that becomes stale also degrades `/health`, even if another service is still reporting. Freshness follows the time the source says the data was observed — the HTTP source's per-row `timestamp`, CloudWatch's datapoint time — rather than when the agent fetched it, so replayed old samples cannot keep monitoring green. Prometheus instant queries only report their evaluation time, so for that source freshness relies on Prometheus's own staleness handling: a target that stops reporting drops out of the result after the lookback window (5 minutes by default) and the service then goes stale here. `faultline_telemetry_healthy`, `faultline_seconds_since_data`, `faultline_incomplete_samples_total`, and per-service `faultline_service_stale_seconds` are all exported, so an exporter that quietly stops looks like a problem rather than a quiet night.
+A collection that succeeds but returns nothing is counted as empty, not as a healthy tick, and after `detector.noDataGraceSeconds` (default 300) the agent reports `degraded` with a 503. A previously healthy service that becomes stale also degrades `/health`, even if another service is still reporting. Freshness follows the time the source says the data was observed (the HTTP source's per-row `timestamp`, CloudWatch's datapoint time) rather than when the agent fetched it, so replayed old samples cannot keep monitoring green. Prometheus instant queries only report their evaluation time, so for that source freshness relies on Prometheus's own staleness handling: a target that stops reporting drops out of the result after the lookback window (5 minutes by default) and the service then goes stale here. `faultline_telemetry_healthy`, `faultline_seconds_since_data`, `faultline_incomplete_samples_total`, and per-service `faultline_service_stale_seconds` are all exported, so an exporter that quietly stops looks like a problem rather than a quiet night.
 
-**Sustained means sustained in time, not in array positions.** A sample whose source timestamp repeats one already counted (a replay) or goes backwards is dropped, and a hole longer than 1.5 × the service's own sample spacing (or `detector.maxSampleGapSeconds`) breaks a sustained run — two elevated minutes either side of a missing one never count as two consecutive windows. The engine applies the same rule from `window_number` and, given the sampling interval, from timestamps. Details: [docs/AGENT.md](docs/AGENT.md#time-continuity).
+**Sustained means sustained in time, not in array positions.** A sample whose source timestamp repeats one already counted (a replay) or goes backwards is dropped, and a hole longer than 1.5 × the service's own sample spacing (or `detector.maxSampleGapSeconds`) breaks a sustained run: two elevated minutes either side of a missing one never count as two consecutive windows. The engine applies the same rule from `window_number` and, given the sampling interval, from timestamps. Details: [docs/AGENT.md](docs/AGENT.md#time-continuity).
 
-**The API cannot be exposed unauthenticated.** It is open only when bound to loopback, which is what the quickstart does. Bind it anywhere else without a token and the agent **refuses to start** — `POST /api/silences` and `POST /api/inject` are a control plane, and a startup warning that still serves the request is not a control. Set a token to bind beyond localhost, with a separate read-only scope so Prometheus can scrape metrics without being able to silence your alerts:
+**The API cannot be exposed unauthenticated.** It is open only when bound to loopback, which is what the quickstart does. Bind it anywhere else without a token and the agent **refuses to start**, because `POST /api/silences` and `POST /api/inject` are a control plane, and a startup warning that still serves the request is not a control. Set a token to bind beyond localhost, with a separate read-only scope so Prometheus can scrape metrics without being able to silence your alerts:
 
 ```bash
 export FAULTLINE_API_TOKEN=$(openssl rand -hex 32)
@@ -193,7 +193,7 @@ export FAULTLINE_READ_TOKEN=$(openssl rand -hex 32)
 
 **Loopback stops other machines, not other websites.** A page open in your browser can send requests to `127.0.0.1`, so the token-less default defends itself against the browser too: a write carrying a foreign `Origin` header is refused (`403`), creating a silence requires `Content-Type: application/json` (which a page cannot send cross-origin without a preflight), and without a token the agent only answers to a loopback `Host` header, which defeats DNS rebinding. Browser access is off entirely by default (`server.corsOrigin: null`); list an origin explicitly to allow one. curl, scripts and Prometheus send no `Origin` and are unaffected.
 
-**Any HTTP endpoint you already have** — `mapping` renames incoming fields, so an existing internal metrics route usually needs no new code:
+**Any HTTP endpoint you already have.** `mapping` renames incoming fields, so an existing internal metrics route usually needs no new code:
 
 ```json
 { "source": { "type": "http", "options": {
@@ -216,8 +216,8 @@ export FAULTLINE_READ_TOKEN=$(openssl rand -hex 32)
 ```
 
 The CloudWatch source emits `client_error_rate`, not `retry_rate`: API Gateway's
-`4XXError` counts every client-side error — auth failures, malformed requests,
-throttling — and is not a retry counter. If you have a real retry metric, map it
+`4XXError` counts every client-side error (auth failures, malformed requests,
+throttling) and is not a retry counter. If you have a real retry metric, map it
 explicitly with `options.metrics`. The source checks its metric keys against
 `detector.metrics` at startup and refuses to run if it cannot supply them, rather
 than collecting forever and detecting nothing.
@@ -226,17 +226,17 @@ Each CloudWatch sample comes from a single period. CloudWatch publishes each
 metric on its own schedule, so the newest latency datapoint can be a period
 ahead of the newest 4XX count, and pairing each metric's newest value would
 build a sample no single period produced. The source reads the last three whole
-periods — the window is aligned to `options.periodSeconds` (default 60), so the
-period still in progress is never read half-filled — and takes every value from
+periods (the window is aligned to `options.periodSeconds`, default 60, so the
+period still in progress is never read half-filled) and takes every value from
 the newest period in which every configured metric has a datapoint, stamped with
 that period's time. If no period in the window has them all, it sends what the
-newest period has and leaves the rest missing — never zero — so the detector
+newest period has and leaves the rest missing, never zero, so the detector
 rejects the sample as incomplete for any service that needs a missing metric.
 Polling more often than the period reads the same period again under the same
 time, and the detector drops the repeat as a duplicate rather than counting one
 period twice.
 
-Then run it, with secrets supplied by the environment — never committed:
+Then run it, with secrets supplied by the environment and never committed:
 
 ```bash
 FAULTLINE_WEBHOOK_URL=https://hooks.slack.com/services/... \
@@ -249,21 +249,21 @@ The webhook payload includes a `text` field, so Slack, Mattermost, and Discord a
 
 ## How detection works
 
-Three equations. No trained model in the detection path — every alert can be re-derived by hand.
+Three equations. No trained model in the detection path, so every alert can be re-derived by hand.
 
-**1. Normalize** — score each metric against its own recent baseline:
+**1. Normalize.** Score each metric against its own recent baseline:
 
 ```
 z = (value − mean) / standard_deviation
 ```
 
-**2. Qualify** — a single bad window is noise; only sustained drift counts:
+**2. Qualify.** A single bad window is noise; only sustained drift counts:
 
 ```
 z ≥ 2.0  AND  persists for ≥ 2 consecutive windows
 ```
 
-**3. Score & trigger** — converging signals compound risk:
+**3. Score & trigger.** Converging signals compound risk:
 
 ```
 R = mean_z × ln(1 + signal_count) × W      →  R ≥ 3.0 opens an incident
@@ -271,7 +271,7 @@ R = mean_z × ln(1 + signal_count) × W      →  R ≥ 3.0 opens an incident
 
 Because `ln(1 + n)` grows with the number of *converging* signals, three metrics at 3σ score far higher than one metric at 9σ. That is the whole thesis: **cascades announce themselves through convergence, not through any single number going red.**
 
-On the bundled reference incident, detection fires **3 windows before** a static 2% error-rate SLO alert would — measured, not asserted: run `npm run verify:engine`.
+On the bundled reference incident, detection fires **3 windows before** a static 2% error-rate SLO alert would. That is measured, not asserted: run `npm run verify:engine`.
 
 ### Incident lifecycle
 
@@ -282,7 +282,7 @@ Detection alone would page you every window. The agent adds the operational half
 | One incident per cascade, not one alert per window | Alert fatigue is how monitoring gets ignored |
 | Resolves only after N consecutive clean windows | One good sample mid-incident means nothing |
 | Cooldown after resolution: a re-trigger is recorded but held, and pages only if still firing when the cooldown ends | Stops a flapping service from paging all night without leaving gaps in the history |
-| Notifier failures are isolated and retried | A dead webhook must not stop detection — or silently lose the page. An alert counts as delivered only once every notifier accepted it; failed ones are retried each window while the incident fires, without re-paging the ones that succeeded |
+| Notifier failures are isolated and retried | A dead webhook must not stop detection or silently lose the page. An alert counts as delivered only once every notifier accepted it; failed ones are retried each window while the incident fires, without re-paging the ones that succeeded |
 | Source failures degrade `/health`, don't crash | Monitoring that dies during an outage is worthless |
 | Restarts resume instead of re-warming | A rolling deploy shouldn't blind you for 12 minutes, or re-page an incident you already know about |
 
@@ -318,7 +318,7 @@ A parameter sweep (`npm run backtest -- --sweep`) shows this is not a tuning pro
 
 ⚠️ **These scenarios were designed from the same mental model as the detector, so they largely measure whether the implementation matches its own assumptions.** They are a regression test, not evidence of field performance: with the default profile's thresholds, precision is 69.4% here and 14.1% on the real dataset above. Read them as "does the math still behave as specified", nothing more.
 
-The default and strict rows are the **agent's incremental rolling detector** — the
+The default and strict rows are the **agent's incremental rolling detector**: the
 same `RollingDetector` the deployed agent runs, fed one window at a time so the
 baseline ages out of a bounded buffer exactly as it does in production. The
 fixed-baseline row is a reference variant that scores a whole series in one call
@@ -340,7 +340,7 @@ Both FAULTLINE profiles catch **every** cascade in the suite. The static SLO bas
 The honest caveats, straight from the same run:
 
 - **A blip that lasts exactly `minSustain` windows still fires** on the default profile (`transient-multi-spike`, 100%). The strict profile (`minSustain: 3`) drops that to 0% and is what you should run in noisy environments. It costs about one window of delay: on the same runs it fires a median of one window after the default profile, and never before it.
-- **A permanent step change still alerts** (`deploy-step-change`, 100%). With a fixed baseline this is mathematically indistinguishable from a real cascade. The agent's rolling baseline absorbs it over time, but you will get an alert first. Arguably correct — a deploy that permanently moves all three metrics is worth knowing about — but it is a false positive against the label, so it is reported as one.
+- **A permanent step change still alerts** (`deploy-step-change`, 100%). With a fixed baseline this is mathematically indistinguishable from a real cascade. The agent's rolling baseline absorbs it over time, but you will get an alert first. Arguably correct (a deploy that permanently moves all three metrics is worth knowing about), but it is a false positive against the label, so it is reported as one.
 - **Sustained 3σ fires about 2 windows earlier** than the default profile and also catches every cascade. It pays for the speed in precision: 59.2%, against 69.4% for the default profile and 82.6% for the strict one.
 - **A few other quiet scenarios fire now and then.** On the default profile `seasonal-traffic` fires on 2 of 20 seeds, and `isolated-sustained-metric` and `organic-growth` on 1 of 20 each. Of these, the strict profile fires only on `seasonal-traffic`, on 1 of 20.
 
@@ -356,7 +356,7 @@ result.detectionWindow                // first window where R crossed the thresh
 compareDetectors(result)              // lead time vs static-SLO and single-metric detectors
 ```
 
-Every window must carry a finite value for every metric in `params.metrics`; an incomplete window throws rather than being scored as zero. The library default is a 4-window baseline, sized for the 12-window reference scenario — pass `baselineWindows` (the agent uses 10) for real data, because a standard deviation estimated from four points is very noisy.
+Every window must carry a finite value for every metric in `params.metrics`; an incomplete window throws rather than being scored as zero. The library default is a 4-window baseline, sized for the 12-window reference scenario. Pass `baselineWindows` (the agent uses 10) for real data, because a standard deviation estimated from four points is very noisy.
 
 ---
 
@@ -384,7 +384,7 @@ An incident-analysis UI that runs the same engine in your browser: scrub a casca
 | `silences[]` | `[]` | Recurring maintenance windows (UTC); ad-hoc ones via API |
 | `server.auth` | env-based | `FAULTLINE_API_TOKEN` (read+write), `FAULTLINE_READ_TOKEN` (read) |
 | `server.tls` | `null` | `certFile` + `keyFile` for built-in HTTPS |
-| `detector.minSignals` | `2` | Qualified signals required to trigger — enforces convergence |
+| `detector.minSignals` | `2` | Qualified signals required to trigger; enforces convergence |
 | `detector.intervalSeconds` | `60` | Collection cadence |
 | `detector.historyWindows` | `40` | Rolling buffer size per service |
 | `detector.baselineWindows` | `10` | Oldest N windows form the baseline |
@@ -438,24 +438,24 @@ Driven by what the [backtest](docs/BACKTEST.md) actually showed. Its first three
 
 Three refinements of *how the numbers are computed* changed nothing, which is itself the most useful result so far: on this data the limit is not statistical technique but that "two channels drifted up together" does not separate the excursions operators called incidents from the ones they did not. The remaining work that changes the *signal* rather than the arithmetic is correlation structure.
 
-- **Change-point detection** — most false positives are level shifts, not drift. Recognizing "this is a new normal" would remove a whole class of them.
-- **Per-channel learned thresholds** — one global `zThreshold` across heterogeneous channels is crude.
-- **Seasonality awareness** — daily and weekly cycles currently look like drift.
-- **Correlation-weighted convergence** — weight signals by whether those channels are *historically* coupled, separating genuine cascades from coincident movement.
+- **Change-point detection.** Most false positives are level shifts, not drift. Recognizing "this is a new normal" would remove a whole class of them.
+- **Per-channel learned thresholds.** One global `zThreshold` across heterogeneous channels is crude.
+- **Seasonality awareness.** Daily and weekly cycles currently look like drift.
+- **Correlation-weighted convergence.** Weight signals by whether those channels are *historically* coupled, separating genuine cascades from coincident movement.
 - OpenTelemetry-native source and trace-derived dependency graphs
 - Optional LLM explanation layer in the agent (the legacy Lambda already has one, on Bedrock)
 
 ## Contributing
 
-Issues, questions and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, repo layout, and the bar for detection changes.
+Issues, questions and PRs are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, repo layout, and the bar for detection changes.
 
-One invariant: **detection stays deterministic and auditable — AI may explain a detection, never cause or suppress one.**
+One invariant: **detection stays deterministic and auditable. AI may explain a detection, never cause or suppress one.**
 
 Detection-quality reports are the most valuable thing you can file. There is an [issue template](.github/ISSUE_TEMPLATE/detection_quality.yml) for them; attaching a CSV of the telemetry means the engine can be run on your data directly.
 
 ## Security
 
-Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY.md), which also documents the attack surface, a hardening checklist, and the known limitations.
+Found a vulnerability? Please report it privately. See [SECURITY.md](SECURITY.md), which also documents the attack surface, a hardening checklist, and the known limitations.
 
 ## Documentation
 
@@ -469,7 +469,7 @@ Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY
 
 ## License
 
-[MIT](LICENSE) — use it, fork it, ship it.
+[MIT](LICENSE): use it, fork it, ship it.
 
 <p align="center">
   <img src="assets/mark.svg" alt="" width="48">
