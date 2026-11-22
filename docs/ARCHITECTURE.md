@@ -2,8 +2,10 @@
 
 FAULTLINE performs **per-service multivariate drift triage**: for each service
 independently, it scores how that service's own telemetry signals drift and
-converge over time, and opens an incident when enough of them move together. It
-ships as three pieces that share one detection engine.
+converge over time, and opens an incident when enough of them move together. The
+product is two pieces that share one detection engine, the monitoring agent and
+the incident-analysis dashboard, plus a legacy Lambda API from the project's
+first version.
 
 **What it does not do.** There is no dependency graph, no distributed tracing,
 no request-propagation model, and no deploy-event ingestion anywhere in the
@@ -28,7 +30,7 @@ packages/core/          @faultline/core — the detection engine
         ┌─────────────────────┼──────────────────────┐
         ▼                     ▼                      ▼
 packages/agent/        frontend/dashboard/     backend/lambda/
-the monitoring agent   incident analysis UI    serverless variant
+the monitoring agent   incident analysis UI    legacy timeline API
 (production)           (postmortems, demos)    (API Gateway + Bedrock)
 ```
 
@@ -153,7 +155,11 @@ panel for arbitrary telemetry, counterfactual mitigation replay, and a
 lead-time comparison against static-SLO and single-metric detectors. It is an
 analysis and teaching surface; the agent is what runs in production.
 
-## Serverless variant
+## Legacy: Lambda timeline API
+
+This is the project's original backend, from v1, and predates the agent. The
+agent and the dashboard do not need it. It is kept because the dashboard's
+optional live mode (built with `VITE_API_URL`) reads from it.
 
 `backend/lambda/timelineHandler` serves stored detection windows from DynamoDB
 (following `LastEvaluatedKey`, so a long timeline is not silently truncated) and

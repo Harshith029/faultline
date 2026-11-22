@@ -1,4 +1,4 @@
-# Backtest on real production telemetry
+# Backtest on real server telemetry from the public Server Machine Dataset
 
 Everything else in this repository measures FAULTLINE against scenarios this
 project designed. This document measures it against telemetry it did not.
@@ -96,13 +96,16 @@ channels to converge is far too weak: 2/3 metrics agreeing is meaningful, 2/38 i
 |---:|---:|---:|---:|---:|
 | 2 | 3 | 14.1% | 80.5% | 23.9% |
 | 2 | 8 | 16.5% | 68.3% | **26.5%** |
+| 4 | 3 | 15.5% | 70.7% | 25.4% |
 | 4 | 8 | 16.0% | 65.9% | 25.8% |
 | 6 | 3 | 13.3% | 65.9% | 22.1% |
 | 8 | 3 | 12.3% | 58.5% | 20.3% |
 | 12 | 3 | 8.7% | 34.1% | 13.8% |
 
-Precision never exceeds ~16.5% at any setting, and demanding more converging
-signals *reduces* it while destroying recall. The false positives are therefore
+Precision never exceeds 16.5% at any of the 15 settings the sweep tries.
+Requiring 4 converging signals instead of 2 moves it by at most 1.4 points, and
+requiring more *reduces* it while destroying recall (34.1% at 12 signals). The
+false positives are therefore
 not coincidental agreement between unrelated channels — they are real,
 multi-channel, sustained excursions in the telemetry that operators did not
 label as incidents. Deploys, batch jobs, traffic shifts and capacity changes all

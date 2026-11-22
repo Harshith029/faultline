@@ -107,7 +107,7 @@ if (asJson) {
 const pct = (x) => (x === null ? '   -  ' : `${(x * 100).toFixed(1)}%`.padStart(6))
 const pad = (s, n) => String(s).padEnd(n)
 
-process.stdout.write(`\nBacktest — Server Machine Dataset (real production telemetry)\n`)
+process.stdout.write(`\nBacktest on the public Server Machine Dataset (real server telemetry)\n`)
 process.stdout.write(`${'='.repeat(88)}\n`)
 process.stdout.write(
   `${runs.length} machine(s), ${runs[0].metrics} channels each, ${aggregate}-sample windows, ${historyWindows}-window rolling history\n`

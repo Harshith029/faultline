@@ -37,7 +37,7 @@ It is a real monitoring agent, not a dashboard: it runs continuously, pulls metr
 
 ### Use it as a ranking signal first
 
-The measured precision on real production telemetry is **~14%** ([docs/BACKTEST.md](docs/BACKTEST.md)) — about six false positives per true one. That is poor for waking someone at 3am and genuinely useful for answering *"where do I look first?"*, because a ranked list costs a glance to be wrong about where a page costs a night.
+The measured precision on real server telemetry from the public Server Machine Dataset is **14.1%** ([docs/BACKTEST.md](docs/BACKTEST.md)), about six false positives per true one. That is poor for waking someone at 3am and genuinely useful for answering *"where do I look first?"*, because a ranked list costs a glance to be wrong about where a page costs a night.
 
 ```bash
 curl localhost:8787/api/ranking
@@ -296,9 +296,9 @@ Detection alone would page you every window. The agent adds the operational half
 
 Two answers, and the honest one is second.
 
-### On real production telemetry
+### On real server telemetry from the public Server Machine Dataset
 
-`npm run backtest` replays the [Server Machine Dataset](https://github.com/NetManAIOps/OmniAnomaly) — 16–20 days of real one-minute server telemetry per machine (the labelled test split, ~69 machine-days in total), 38 channels per machine, incidents labelled by the operators who ran the systems. Detection is replayed causally (no detector sees the future) across 41 labelled incidents on 4 machines, using **all 38 channels with no hand-picking**.
+`npm run backtest` replays the public [Server Machine Dataset](https://github.com/NetManAIOps/OmniAnomaly) (SMD), published by NetManAIOps with OmniAnomaly: 16 to 20 days of real one-minute server telemetry per machine (the labelled test split, about 69 machine-days in total), 38 channels per machine, with incidents labelled by the operators who ran the systems. Detection is replayed causally (no detector sees the future) across 41 labelled incidents on 4 machines, using **all 38 channels with no hand-picking**.
 
 | Detector | Precision | Recall | F1 | False alerts |
 |---|---:|---:|---:|---:|
@@ -306,15 +306,17 @@ Two answers, and the honest one is second.
 | Sustained 3σ | 11.3% | 85.4% | 20.0% | 430 |
 | Single metric 3σ | 7.3% | 97.6% | 13.5% | 1019 |
 
-FAULTLINE wins on F1 and roughly doubles the precision of a single-metric threshold while nearly halving its false alerts — **and 14% precision is still too noisy to page a human unattended.** Both facts are true and neither is hidden.
+FAULTLINE has the best F1 of the three, roughly doubles the precision of a single-metric threshold and nearly halves its false alerts. **At 14.1% precision it is still too noisy to page a human unattended.**
 
-A parameter sweep confirms this is not a tuning problem: precision never exceeds 16.5% at any threshold, and demanding more converging signals *lowers* it while destroying recall. Most false positives are real, sustained, multi-channel excursions that operators simply did not call incidents — deploys, batch jobs, capacity shifts. **Use it today as a triage and ranking signal, not as an unattended pager.** Full analysis, per-machine breakdown and the roadmap that would move the number: [docs/BACKTEST.md](docs/BACKTEST.md).
+The same run prints two more FAULTLINE variants that were tried and rejected (see the [roadmap](#roadmap)): per-channel learned thresholds (`+learned`) and median/MAD statistics (`+MAD`). `+learned` reaches a higher aggregate F1, 29.0%, but catches none of the 10 incidents on `machine-3-2`.
+
+A parameter sweep (`npm run backtest -- --sweep`) shows this is not a tuning problem. Across its 15 combinations of `minSignals` and trigger threshold, precision never exceeds 16.5%. Requiring 4 converging signals instead of 2 moves it by at most 1.4 points, and requiring more *lowers* it while cutting recall, to 34.1% at 12 signals. Most false positives are real, sustained, multi-channel excursions that the operators did not label as incidents; deploys, batch jobs and capacity changes produce exactly that shape. **Use it today as a triage and ranking signal, not as an unattended pager.** Full analysis, per-machine breakdown and the roadmap that would move the number: [docs/BACKTEST.md](docs/BACKTEST.md).
 
 ### On synthetic scenarios
 
-`npm run benchmark` runs every detector against 12 labeled scenarios × 20 seeds — five cascades that **must** be caught, and seven adversarial non-incidents (single-window spikes, transient blips, deploy step-changes, 3× noise, seasonal load, organic growth) that **must not** page anyone.
+`npm run benchmark` runs every detector against 12 labeled scenarios × 20 seeds: five cascades that **must** be caught, and seven adversarial non-incidents that **must not** page anyone (a single-window spike, a two-window blip on every metric, one metric held high on its own, a deploy step change, 3× noise, seasonal load and organic growth).
 
-⚠️ **These scenarios were designed from the same mental model as the detector, so they largely measure whether the implementation matches its own assumptions.** They are a regression test, not evidence of field performance — the real-world numbers above are ~6× worse. Read them as "does the math still behave as specified", nothing more.
+⚠️ **These scenarios were designed from the same mental model as the detector, so they largely measure whether the implementation matches its own assumptions.** They are a regression test, not evidence of field performance: with the default profile's thresholds, precision is 69.4% here and 14.1% on the real dataset above. Read them as "does the math still behave as specified", nothing more.
 
 The default and strict rows are the **agent's incremental rolling detector** — the
 same `RollingDetector` the deployed agent runs, fed one window at a time so the
@@ -333,13 +335,14 @@ scenarios where it is weakest.
 | Single metric 3σ | 35.5% | 66.0% | 46.2% | +6w |
 | Static SLO (3×) | 33.3% | 3.0% | 5.5% | +15w |
 
-Both FAULTLINE profiles catch **every** cascade in the suite. The static SLO baseline catches 3% — it is a lagging outcome metric, which is exactly the problem this project exists to address. Median lead over that baseline: **7 windows**.
+Both FAULTLINE profiles catch **every** cascade in the suite. The static SLO baseline catches 3% of cascade runs (3 of 100) because it is a lagging outcome metric, which is exactly the problem this project exists to address. On those 3 runs FAULTLINE fired a median of **7 windows** earlier.
 
 The honest caveats, straight from the same run:
 
-- **A blip that lasts exactly `minSustain` windows still fires** on the default profile (`transient-multi-spike`, 100%). The strict profile (`minSustain: 3`) drops that to 0% and is what you should run in noisy environments — it costs about one window of delay.
+- **A blip that lasts exactly `minSustain` windows still fires** on the default profile (`transient-multi-spike`, 100%). The strict profile (`minSustain: 3`) drops that to 0% and is what you should run in noisy environments. It costs about one window of delay: on the same runs it fires a median of one window after the default profile, and never before it.
 - **A permanent step change still alerts** (`deploy-step-change`, 100%). With a fixed baseline this is mathematically indistinguishable from a real cascade. The agent's rolling baseline absorbs it over time, but you will get an alert first. Arguably correct — a deploy that permanently moves all three metrics is worth knowing about — but it is a false positive against the label, so it is reported as one.
-- **Sustained 3σ fires ~2 windows earlier** than FAULTLINE and catches everything too. It is simply far noisier (59.2% vs 82.6% precision for the strict profile). Speed is not free.
+- **Sustained 3σ fires about 2 windows earlier** than the default profile and also catches every cascade. It pays for the speed in precision: 59.2%, against 69.4% for the default profile and 82.6% for the strict one.
+- **A few other quiet scenarios fire now and then.** On the default profile `seasonal-traffic` fires on 2 of 20 seeds, and `isolated-sustained-metric` and `organic-growth` on 1 of 20 each. Of these, the strict profile fires only on `seasonal-traffic`, on 1 of 20.
 
 ## Use it as a library
 
@@ -357,13 +360,17 @@ Every window must carry a finite value for every metric in `params.metrics`; an 
 
 ---
 
-## The dashboard (optional)
+## The dashboard
 
 ```bash
 npm run dashboard   # http://localhost:5173
 ```
 
-An incident-analysis UI over the same engine: scrub a cascade window by window, watch each z-score get derived from raw values, compare lead time against baseline detectors, run counterfactual mitigations ("what if we had acted at W6?"), and drop in your own CSV. Useful for postmortems and for understanding the math — the agent is what runs in production.
+An incident-analysis UI that runs the same engine in your browser: scrub a cascade window by window, watch each z-score get derived from raw values, compare lead time against baseline detectors, run counterfactual mitigations ("what if we had acted at W6?"), and drop in your own CSV. The agent watches your services; the dashboard is where you take an incident apart and check the math. It needs no backend. Its optional live mode reads from the legacy Lambda API described next.
+
+## Legacy: the Lambda and Bedrock timeline API
+
+`backend/lambda/timelineHandler` is the project's original backend, from the v1 competition entry, and predates the agent. It is an API Gateway + Lambda endpoint that serves stored detection windows from DynamoDB and live API Gateway metrics from CloudWatch, and it can ask Amazon Bedrock for a plain-language summary of the window where detection fired. The agent and the dashboard do not need it. It is kept, with its tests and CI job, because the dashboard's optional live mode (built with `VITE_API_URL`) reads from it. Deployment notes: [DEPLOY.md](backend/lambda/timelineHandler/DEPLOY.md).
 
 ---
 
@@ -406,8 +413,8 @@ Full operational detail: [docs/AGENT.md](docs/AGENT.md) · architecture: [docs/A
 ```
 packages/core/      detection engine + CSV parser (zero deps, shared)
 packages/agent/     the monitoring agent: sources, detector, alerting, API
-frontend/dashboard/ incident-analysis UI (optional)
-backend/lambda/     AWS Lambda variant for serverless deployments
+frontend/dashboard/ incident-analysis UI
+backend/lambda/     legacy Lambda + Bedrock timeline API behind the dashboard's live mode
 docs/               architecture and operations
 ```
 
@@ -418,7 +425,7 @@ npm test              # engine, agent, benchmark, dashboard and Lambda suites
 npm run verify:engine # reference cascade assertion
 npm run benchmark     # synthetic precision/recall/lead time vs baselines
 npm run fetch:dataset # download the Server Machine Dataset (not vendored)
-npm run backtest      # replay real production telemetry
+npm run backtest      # replay real server telemetry from the public Server Machine Dataset
 ```
 
 `npm test` runs 408 tests across those five suites. The Lambda keeps its own lockfile, so the first run also installs its dependencies from it.
@@ -436,7 +443,7 @@ Three refinements of *how the numbers are computed* changed nothing, which is it
 - **Seasonality awareness** — daily and weekly cycles currently look like drift.
 - **Correlation-weighted convergence** — weight signals by whether those channels are *historically* coupled, separating genuine cascades from coincident movement.
 - OpenTelemetry-native source and trace-derived dependency graphs
-- Optional LLM explanation layer in the agent (already present in the AWS Lambda variant)
+- Optional LLM explanation layer in the agent (the legacy Lambda already has one, on Bedrock)
 
 ## Contributing
 
@@ -469,5 +476,5 @@ Found a vulnerability? Please report it privately — see [SECURITY.md](SECURITY
 </p>
 
 <p align="center">
-  Built by <b>Pali Krishna Harshith</b> · Top 300 Finalist, AWS Builder Center AIdeas Challenge
+  Built by <b>Pali Krishna Harshith</b> · Top 300 semi-finalist (community-voted round), AWS 10,000 AIdeas Competition 2026
 </p>

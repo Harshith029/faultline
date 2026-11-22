@@ -1,5 +1,12 @@
 # Deploying the timeline handler
 
+> **Legacy.** This Lambda is the project's original backend, from the v1
+> competition entry, and predates the agent. The product is the
+> zero-dependency Node.js agent (`packages/agent`) and the dashboard, and
+> neither needs this API. It is kept because the dashboard's optional live mode
+> (built with `VITE_API_URL`) reads from it, and its tests run as part of the
+> root `npm test`.
+
 This package is deliberately **outside the root npm workspaces**. It has its own
 lockfile and is installed, tested, and packaged independently, so the deployment
 artifact contains exactly the dependencies the handler declares and nothing from
