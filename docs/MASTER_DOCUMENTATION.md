@@ -265,7 +265,7 @@ timeline
 
 | Fact | Evidence |
 |---|---|
-| The project began as an entry to the **AWS Builder Center AIdeas Challenge** and was a Top 300 finalist | README footer; `LandingPage.jsx` badge |
+| The project began as an entry to the **AWS 10,000 AIdeas Competition 2026** and was a Top 300 semi-finalist in its community-voted round | README footer; `LandingPage.jsx` badge |
 | v1 (`30a2c2d`, 2026-03-20) was a **demo system**: a dashboard over a precomputed 12-window scenario in DynamoDB, with Bedrock (Claude 3 Haiku, `ap-south-1`) generating a "root cause hypothesis" | v1 file list; `iam-policy.json`; `scripts/seed.js`; `scripts/verify.js` |
 | v1 marketed "AI root-cause diagnosis" | `frontend/dashboard/index.html` meta description (still present: F-10) |
 | The product was **repositioned** on 2026-07-08 as open source, "clone-and-run", MIT | Commit `949cfae` |

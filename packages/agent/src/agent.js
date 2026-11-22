@@ -795,8 +795,9 @@ export class FaultlineAgent {
   /**
    * Services ordered by current cascade risk, most at-risk first.
    *
-   * This is the honest primary use of the tool. Measured against real
-   * production telemetry the detector reaches ~14% precision (docs/BACKTEST.md),
+   * This is the honest primary use of the tool. Measured against real server
+   * telemetry from the public Server Machine Dataset, the detector reaches ~14%
+   * precision (docs/BACKTEST.md),
    * which is poor for waking someone at 3am but genuinely useful for answering
    * "where should I look first?" — a ranked list costs a glance to be wrong
    * about, where a page costs a night.

@@ -28,8 +28,8 @@ const FEATURES = [
   },
   {
     title: 'Optional model-written summary',
-    body: 'When a Bedrock model is configured, the detection window is summarised in plain language, constrained to the one service that drifted and to the signals the detector actually qualified. It explains; it never detects, and it is not a root-cause claim.',
-    tag: 'Bedrock (optional)',
+    body: 'When the legacy Lambda API has a Bedrock model configured, the detection window is summarised in plain language, constrained to the one service that drifted and to the signals the detector actually qualified. It explains; it never detects, and it is not a root-cause claim.',
+    tag: 'Legacy Lambda + Bedrock',
   },
   {
     title: 'Counterfactual simulation',
@@ -105,7 +105,7 @@ export default function LandingPage({ onLaunch }) {
         <section className="flex flex-col items-center pb-20 pt-16 text-center sm:pt-24">
           <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 text-xs text-slate-300">
             <span className="status-pulse h-2 w-2 rounded-full bg-sky-400" />
-            AWS Builder Center AIdeas Challenge — Top 300 Finalist
+            Top 300 semi-finalist (community-voted round), AWS 10,000 AIdeas Competition 2026
           </div>
 
           <h1 className="mt-8 max-w-4xl text-4xl font-semibold leading-tight tracking-tight text-white sm:text-6xl">

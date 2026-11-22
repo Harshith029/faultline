@@ -14,11 +14,11 @@ npm test
 Node 22.12 or newer — any Node line still in security support (22, 24 or 26;
 CI tests all three). Node 20 is end of life and no longer supported. The agent
 and engine have **no runtime dependencies** and the test suite uses Node's
-built-in runner, so there is nothing else to install.
+built-in runner, so there is nothing else to install by hand. The Lambda handler
+keeps its own lockfile, and the first `npm test` installs its dependencies from it.
 
 ```bash
-npm test                 # engine, agent, benchmark and dashboard tests
-npm --prefix backend/lambda/timelineHandler test   # Lambda handler (own lockfile; npm ci there first)
+npm test                 # engine, agent, benchmark, dashboard and Lambda tests
 npm run verify:engine    # reference cascade assertion
 npm run benchmark        # precision/recall against baseline detectors
 npm run agent:demo       # watch the agent detect a live synthetic cascade

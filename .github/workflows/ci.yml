@@ -24,7 +24,7 @@ jobs:
       - run: npm ci
       - name: Lint and static checks
         run: npm run lint
-      - name: Unit tests (engine + agent + benchmark + dashboard)
+      - name: Unit tests (engine + agent + benchmark + dashboard + Lambda)
         run: npm test
       - name: Reference scenario verification
         run: npm run verify:engine
